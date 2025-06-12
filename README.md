@@ -9,6 +9,8 @@ A modified fork of [pawan-pk/react-native-mapbox-navigation](https://github.com/
 - traffic lights display
 
 ---
+## Important:
+The project requires `newArchEnabled=false` on android and `ENV['RCT_NEW_ARCH_ENABLED'] = '0'` on ios. Support for newArch is in-progress
 
 ## Installation
 
