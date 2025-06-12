@@ -1,41 +1,14 @@
-# @pawan-pk/react-native-mapbox-navigation <br/>[![npm](https://img.shields.io/npm/v/%40pawan-pk%2Freact-native-mapbox-navigation)](https://www.npmjs.com/package/@pawan-pk/react-native-mapbox-navigation) [![Build status](https://img.shields.io/github/actions/workflow/status/pawan-pk/react-native-mapbox-navigation/ci.yml?branch=main&label=tests)](https://github.com/pawan-pk/react-native-mapbox-navigation/actions) [![npm](https://img.shields.io/npm/dw/%40pawan-pk%2Freact-native-mapbox-navigation)](https://www.npmjs.com/package/@pawan-pk/react-native-mapbox-navigation)
+# @abhinavvv13/react-native-mapbox-navigation
 
-Mapbox React Native SDKs enable interactive maps and real-time, traffic-aware turn-by-turn navigation, dynamically adjusting routes to avoid congestion.
+A modified fork of [pawan-pk/react-native-mapbox-navigation](https://github.com/pawan-pk/react-native-mapbox-navigation) with all original features **plus**:
 
-🆕&nbsp; Uses Mapbox navigation v3 SDK<br>
-📱&nbsp; Supports iOS, Android<br>
-🌍&nbsp; Various languages<br>
-🎨&nbsp; Customizable<br>
-⛕&nbsp; Multiple Waypoints<br>
-🚘&nbsp; iOS CarPlay Support
+- 🛰️ Customer live location updates  
+- 🔄 Automatic reroute when **destination** or **waypoints** change  
+- 🌐 Dynamic language switching mid-navigation  
+- 🚴 Dynamic travel-mode switching (driving, traffic-aware, walking, cycling)
+- traffic lights display
 
-<a href="https://www.buymeacoffee.com/pawan_kumar" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
-
-## Route View
-
-<table>
-   <tr>
-  <td><img src="docs/route-view-ios.png" alt="Turn by turn Navigation iOS" height="400px" style="margin-left:10px" /></td>
-        <td><img src="docs/route-view-android.png" alt="Turn by turn Navigation Android" height="400px" style="margin-left:10px" />
-    </td>
-  </tr>
-      <tr>
-  <td align="center">iOS</td><td align="center">Android</td>
-  </tr>
-  </table>
-
-## Turn by turn Navigation View
-
-<table>
-   <tr>
-  <td><img src="docs/navigation-view-ios.png" alt="Turn by turn Navigation iOS" height="400px" style="margin-left:10px" /></td>
-        <td><img src="docs/navigation-view-android.png" alt="Turn by turn Navigation Android" height="400px" style="margin-left:10px" />
-    </td>
-  </tr>
-      <tr>
-  <td align="center">iOS</td><td align="center">Android</td>
-  </tr>
-  </table>
+---
 
 ## Installation
 
@@ -43,10 +16,10 @@ Mapbox React Native SDKs enable interactive maps and real-time, traffic-aware tu
 
 ```sh
 # yarn
-yarn add @pawan-pk/react-native-mapbox-navigation
+yarn add @abhinavvv13/react-native-mapbox-navigation
 
 # npm
-npm install @pawan-pk/react-native-mapbox-navigation
+npm install @abhinavvv13/react-native-mapbox-navigation
 ```
 
 ## iOS Specific Instructions
@@ -122,30 +95,125 @@ npm install @pawan-pk/react-native-mapbox-navigation
 ## Usage
 
 ```js
-import MapboxNavigation from '@pawan-pk/react-native-mapbox-navigation';
-import { StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { Button, StyleSheet, Text, View } from 'react-native';
+import MapboxNavigation from '@abhinavvv13/react-native-mapbox-navigation';
 
-export default function App() {
+export default function App(): React.JSX.Element {
+  const [navigating, setNavigating] = useState(false);
+
+  const [waypoints, setWaypoints] = useState([
+    { latitude: 47.541228, longitude: -52.724106 },
+    { latitude: 47.653096, longitude: -52.72541 },
+  ]);
+
+  const [destination, setDestination] = useState({
+    latitude: 47.544934773284886,
+    longitude: -52.71227031729059,
+    title: 'Pickup',
+  });
+
+  const [customerLocation, setCustomerLocation] = useState({
+    latitude: 47.544934773284886,
+    longitude: -52.71227031729059,
+  });
+
+  useEffect(() => {
+    if (!navigating) return;
+    const id = setInterval(() => {
+      setCustomerLocation((prev) => ({
+        latitude: prev.latitude + (Math.random() - 0.5) * 0.0001,
+        longitude: prev.longitude + (Math.random() - 0.5) * 0.0001,
+      }));
+    }, 5000);
+    return () => clearInterval(id);
+  }, [navigating]);
+
+  useEffect(() => {
+    if (!navigating) return;
+    const destTimer = setTimeout(() => {
+      setDestination({
+        latitude: 47.575996906819206,
+        longitude: -52.72219571162997,
+        title: 'New Destination',
+      });
+    }, 20000);
+    return () => clearTimeout(destTimer);
+  }, [navigating]);
+
+  useEffect(() => {
+    if (!navigating) return;
+    const wpTimer = setTimeout(() => {
+      setWaypoints([
+        { latitude: 47.531664, longitude: -52.806148 },
+        { latitude: 47.653096, longitude: -52.72541 },                         
+      ]);
+    }, 30000);
+    return () => clearTimeout(wpTimer);
+  }, [navigating]);
+
+  if (!navigating) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.main}>
+          <Text style={styles.heading}>
+            Hit below button to start navigating
+          </Text>
+          <Button
+            onPress={() => setNavigating(true)}
+            title="Start Navigation"
+          />
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <MapboxNavigation
-      startOrigin={{ latitude: 30.699239, longitude: 76.6905161 }}
-      destination={{ latitude: 30.6590196, longitude: 76.8185852 }}
-      waypoints={[
-        { latitude: 30.726848, longitude: 76.733758 },
-        { latitude: 30.738819, longitude: 76.757902 },
-      ]}
-      customerLocation={{ latitude: 30.701982, longitude: 76.693183 }}
-      style={styles.container}
-      shouldSimulateRoute={false}
-      showCancelButton={false}
-      language="en"
-    />
+    <View style={styles.container}>
+      <MapboxNavigation
+        startOrigin={{
+          latitude: 47.56433471443351,
+          longitude: -52.72276842173629,
+        }}
+        destination={destination}
+        waypoints={waypoints}
+        customerLocation={customerLocation}
+        travelMode="driving-traffic"
+        style={styles.container}
+        shouldSimulateRoute={true}
+        showCancelButton={true}
+        language="en"
+        distanceUnit="metric"
+        onCancelNavigation={() => setNavigating(false)}
+        onArrive={(pt) => console.log('onArrive', pt)}
+        onError={(err) => console.log('onError', err)}
+      />
+      <View style={styles.coordsOverlay}>
+        <Text>Cust lat: {customerLocation.latitude.toFixed(6)}</Text>
+        <Text>Cust lng: {customerLocation.longitude.toFixed(6)}</Text>
+        <Text>Dest lat: {destination.latitude.toFixed(6)}</Text>
+        <Text>Dest lng: {destination.longitude.toFixed(6)}</Text>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  container: { flex: 1 },
+  main: { marginTop: 100 },
+  heading: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  coordsOverlay: {
+    position: 'absolute',
+    top: 40,
+    left: 20,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    padding: 8,
+    borderRadius: 4,
   },
 });
 ```
@@ -154,7 +222,7 @@ const styles = StyleSheet.create({
 
 - `startOrigin(Required)` (object): The starting point of the navigation. Should contain latitude and longitude keys.
 
-- `destination(Required)` (object): The destination point of the navigation. Should contain latitude and longitude keys.
+- `destination(Required)` (object): The destination point of the navigation. Should contain latitude and longitude keys. **`Now supports change of coordinates dynamically`**
 
 - `waypoints` (array): The waypoints for navigation points between startOrigin and destination. Should contains array of latitude and longitude keys.
 - `customerLocation` (object): Current customer coordinate to show on the map.
@@ -168,6 +236,8 @@ const styles = StyleSheet.create({
 - `language` (string): The language for the navigation instructions. Defaults to `en`.
 
 - `distanceUnit` ('metric' | 'imperial'): Unit of direction and voice instructions (default is 'imperial')
+
+- `customerLocation` draws a customer annonation at given coordinates. Coordinates can be changed dynamically in JS.
 
 - `onLocationChange`: Function that is called frequently during route navigation. It receives `latitude`, `longitude`, `heading` and `accuracy` as parameters that represent the current location during navigation.
 
