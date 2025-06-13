@@ -1,3 +1,4 @@
+//MapboxNavigationView.kt
 package com.mapboxnavigation
 
 import android.annotation.SuppressLint
@@ -113,6 +114,7 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
   private var reroutePending = false
   private var isNavigating = false
   private var navigationInitialized = false
+  private var mapStyle: String = NavigationStyles.NAVIGATION_DAY_STYLE
 
   private val rerouteRunnable = Runnable {
     reroutePending = false
@@ -605,7 +607,7 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
     )
 
     // load map style
-    binding.mapView.mapboxMap.loadStyle(NavigationStyles.NAVIGATION_DAY_STYLE) {
+    binding.mapView.mapboxMap.loadStyle(mapStyle) {
       // Ensure that the route line related layers are present before the route arrow
       val dotBitmap = BitmapFactory.decodeResource(context.resources,R.drawable.red_dot)
       it.addImage(
@@ -921,6 +923,14 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
 
   fun setShowCancelButton(show: Boolean) {
     binding.stop.visibility = if (show) View.VISIBLE else View.INVISIBLE
+  }
+
+  fun setMapStyle(style: String){
+    this.mapStyle = style
+    Log.d("MapboxNavigationView", "Setting map style: $style")
+    binding.mapView.mapboxMap.style?.let {
+      binding.mapView.mapboxMap.loadStyle(style) 
+    }
   }
 
   fun setTravelMode(mode: String) {

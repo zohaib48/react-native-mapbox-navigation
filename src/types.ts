@@ -1,3 +1,4 @@
+//types.ts
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import type { Language } from './locals';
@@ -109,6 +110,12 @@ export interface MapboxNavigationProps {
    * @android Planned for next release
    */
   shouldSimulateRoute?: boolean;
+
+  /**
+   * Map Style URL
+   * @Default NavigationStyles.NAVIGATION_DAY_STYLE for android, Daystyle for IOS
+   */
+  mapStyle?: string;
 
   onLocationChange?: (location: Location) => void;
   onRouteProgressChange?: (progress: RouteProgress) => void;

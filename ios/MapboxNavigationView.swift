@@ -37,9 +37,7 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
     var embedded: Bool
     var embedding: Bool
 
-    @objc public var startOrigin: NSArray = [] {
-        didSet { propDidChange() }
-    }
+    @objc public var startOrigin: NSArray = []
 
     @objc public var customerLocation: NSArray = [] {
         didSet {
@@ -74,9 +72,10 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
     @objc var distanceUnit: NSString = "imperial" {
         didSet { propDidChange() }
     }
-    @objc var language: NSString = "us" { didSet { propDidChange() } }
+    @objc var language: NSString = "us"
     @objc var destinationTitle: NSString = "Destination" { didSet { propDidChange() } }
-    @objc var travelMode: NSString = "driving-traffic" { didSet { propDidChange() } }
+    @objc var travelMode: NSString = "driving-traffic"
+    @objc var mapStyle: NSString?
 
     // MARK: – Customer annotation manager
     private var customerAnnotationManager: PointAnnotationManager?
@@ -91,6 +90,7 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
     @objc var vehicleMaxHeight: NSNumber?
     @objc var vehicleMaxWidth: NSNumber?
     @objc var onRouteReady: RCTDirectEventBlock?
+
 
     override init(frame: CGRect) {
         self.embedded = false
@@ -189,6 +189,10 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
                 NavigationSettings.shared.voiceMuted = strongSelf.mute
                 NavigationSettings.shared.distanceUnit = strongSelf.distanceUnit == "imperial" ? .mile : .kilometer
 
+                if let mapStyle = strongSelf.mapStyle as String? {
+                  vc.navigationMapView?.mapView?.mapboxMap.style.uri = StyleURI(rawValue: mapStyle)
+                }
+
                 vc.delegate = strongSelf
 
                 parentVC.addChild(vc)
@@ -261,6 +265,7 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
 
     private func propDidChange() {
         checkInitNavigation()
+        guard navigationInitialized, isNavigating, !embedding else { return }
         if isNavigating {
             scheduleReroute()
         }

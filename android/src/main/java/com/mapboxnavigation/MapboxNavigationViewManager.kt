@@ -1,3 +1,4 @@
+//MapboxNavigationViewManager.kt
 package com.mapboxnavigation
 
 import com.facebook.react.module.annotations.ReactModule
@@ -123,6 +124,13 @@ class MapboxNavigationViewManager(private var reactContext: ReactApplicationCont
   override fun setTravelMode(view: MapboxNavigationView?, value: String?) {
     if (value != null)  {
       view?.setTravelMode(value)
+    }
+  }
+
+  @ReactProp(name = "mapStyle")
+  override fun setMapStyle(view: MapboxNavigationView?, value: String?){
+    if( value != null){
+      view?.setMapStyle(value)
     }
   }
 

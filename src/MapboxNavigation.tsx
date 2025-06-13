@@ -1,3 +1,4 @@
+//MapboxNavigation.tsx
 import * as React from 'react';
 
 import type { Permission, TextStyle, ViewStyle } from 'react-native';
@@ -109,6 +110,7 @@ class MapboxNavigation extends React.Component<
       onRouteReady,
       travelMode,
       customerLocation,
+      mapStyle,
       ...rest
     } = this.props;
 
@@ -136,6 +138,7 @@ class MapboxNavigation extends React.Component<
           }
           onRouteReady={(event) => onRouteReady?.(event.nativeEvent)}
           travelMode={travelMode}
+          mapStyle={mapStyle}
           {...rest}
         />
       </View>

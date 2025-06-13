@@ -91,6 +91,7 @@ export default function App() {
         travelMode="driving-traffic"
         style={styles.container}
         shouldSimulateRoute={true}
+        mapStyle="mapbox://styles/mapbox/standard"
         showCancelButton={true}
         language="en"
         distanceUnit="metric"

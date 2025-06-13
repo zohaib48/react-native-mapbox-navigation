@@ -1,3 +1,4 @@
+//MapboxNavigationViewNativeComponent.ts
 import type { HostComponent, ViewProps } from 'react-native';
 import { requireNativeComponent } from 'react-native';
 import type { Double } from 'react-native/Libraries/Types/CodegenTypes';
@@ -25,6 +26,7 @@ interface NativeProps extends ViewProps {
   showsEndOfRouteFeedback?: boolean;
   hideStatusView?: boolean;
   travelMode?: string;
+  mapStyle?: string;
 }
 
 const Component = (global as any).__turboModuleProxy
