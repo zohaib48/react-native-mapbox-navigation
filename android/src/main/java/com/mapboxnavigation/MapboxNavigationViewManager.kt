@@ -31,6 +31,7 @@ class MapboxNavigationViewManager(private var reactContext: ReactApplicationCont
       "onCancelNavigation", MapBuilder.of("registrationName", "onCancelNavigation"),
       "onArrive", MapBuilder.of("registrationName", "onArrive"),
       "onRouteProgressChange", MapBuilder.of("registrationName", "onRouteProgressChange"),
+      "onRouteReady", MapBuilder.of("registrationName", "onRouteReady"),
     )
   }
 
@@ -124,6 +125,7 @@ class MapboxNavigationViewManager(private var reactContext: ReactApplicationCont
       view?.setTravelMode(value)
     }
   }
+
 
   companion object {
     const val NAME = "MapboxNavigationView"

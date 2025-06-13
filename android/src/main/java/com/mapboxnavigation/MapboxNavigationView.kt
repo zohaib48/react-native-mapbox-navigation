@@ -781,10 +781,29 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
           routes: List<NavigationRoute>,
           @RouterOrigin routerOrigin: String
         ) {
+          val route = routes.firstOrNull()?.directionsRoute ?: return
+
+          val polyline = route.geometry()
+          val distance = route.distance()
+          val duration = route.duration()
+          
+          sendRouteDetailsToReact(polyline, distance, duration)
           setRouteAndStartNavigation(routes)
         }
       }
     )
+  }
+
+  private fun sendRouteDetailsToReact(polyline: String?, distance: Double, duration: Double) {
+    val event = Arguments.createMap().apply {
+      putString("polyline", polyline)
+      putDouble("distance", distance)
+      putDouble("duration", duration)
+    }
+
+    context
+      .getJSModule(RCTEventEmitter::class.java)
+      .receiveEvent(id, "onRouteReady", event)
   }
 
   @SuppressLint("MissingPermission")

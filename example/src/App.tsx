@@ -4,6 +4,9 @@ import MapboxNavigation from '@abhinavvv13/react-native-mapbox-navigation';
 
 export default function App() {
   const [navigating, setNavigating] = useState(false);
+  const [routePolyline, setRoutePolyline] = useState<string | null>(null);
+  const [routeDistance, setRouteDistance] = useState<number | null>(null);
+  const [routeDuration, setRouteDuration] = useState<number | null>(null);
 
   // initial two waypoints
   const [waypoints, setWaypoints] = useState([
@@ -94,12 +97,20 @@ export default function App() {
         onCancelNavigation={() => setNavigating(false)}
         onArrive={(pt) => console.log('onArrive', pt)}
         onError={(err) => console.log('onError', err)}
+        onRouteReady={(event) => {
+          setRoutePolyline(event.polyline);
+          setRouteDistance(event.distance);
+          setRouteDuration(event.duration);
+        }}
       />
       <View style={styles.coordsOverlay}>
-        <Text>Cust lat: {customerLocation.latitude.toFixed(6)}</Text>
-        <Text>Cust lng: {customerLocation.longitude.toFixed(6)}</Text>
-        <Text>Dest lat: {destination.latitude.toFixed(6)}</Text>
-        <Text>Dest lng: {destination.longitude.toFixed(6)}</Text>
+        {routePolyline && (
+          <Text>
+            Route Polyline: {routePolyline.substring(0, 20)}...
+            {'\n'}Route Distance: {routeDistance}m{'\n'}Route Duration:{' '}
+            {routeDuration}s
+          </Text>
+        )}
       </View>
     </View>
   );

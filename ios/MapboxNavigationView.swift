@@ -90,6 +90,7 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
     @objc var onArrive: RCTDirectEventBlock?
     @objc var vehicleMaxHeight: NSNumber?
     @objc var vehicleMaxWidth: NSNumber?
+    @objc var onRouteReady: RCTDirectEventBlock?
 
     override init(frame: CGRect) {
         self.embedded = false
@@ -168,6 +169,17 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
                 strongSelf.onError!(["message": error.localizedDescription])
             case .success(let response):
                 strongSelf.indexedRouteResponse = response
+              guard let route = response.routeResponse.routes?.first else { return }
+
+              let polyline = route.description
+                let distance = route.distance
+                let duration = route.expectedTravelTime
+
+              self?.onRouteReady?(["polyline": polyline,
+                                         "distance": distance,
+                                         "duration": duration])
+
+
                 let navigationOptions = NavigationOptions(simulationMode: strongSelf.shouldSimulateRoute ? .always : .never)
                 let vc = NavigationViewController(for: response, navigationOptions: navigationOptions)
 

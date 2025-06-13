@@ -51,12 +51,19 @@ export type MapboxEvent = {
   message?: string;
 };
 
+export type RouteReadyEvent = {
+  polyline: string | null;
+  distance: number;
+  duration: number;
+};
+
 export type NativeEventsProps = {
   onLocationChange?: (event: NativeEvent<Location>) => void;
   onRouteProgressChange?: (event: NativeEvent<RouteProgress>) => void;
   onError?: (event: NativeEvent<MapboxEvent>) => void;
   onCancelNavigation?: (event: NativeEvent<MapboxEvent>) => void;
   onArrive?: (event: NativeEvent<WaypointEvent>) => void;
+  onRouteReady?: (event: NativeEvent<RouteReadyEvent>) => void;
 };
 
 export interface MapboxNavigationProps {
@@ -108,4 +115,5 @@ export interface MapboxNavigationProps {
   onError?: (error: MapboxEvent) => void;
   onCancelNavigation?: (event: MapboxEvent) => void;
   onArrive?: (point: WaypointEvent) => void;
+  onRouteReady?: (event: RouteReadyEvent) => void;
 }
