@@ -92,6 +92,16 @@ import com.mapbox.maps.plugin.annotation.AnnotationPlugin
 import com.mapbox.maps.plugin.annotation.AnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import android.graphics.BitmapFactory
+import android.os.Build
+import androidx.annotation.RequiresApi
+import androidx.core.view.KeyEventDispatcher
+import com.mapbox.api.directions.v5.models.BannerComponents
+import com.mapbox.navigation.tripdata.maneuver.model.Component
+import com.mapbox.navigation.tripdata.maneuver.model.PrimaryManeuver
+import com.mapbox.navigation.ui.components.maneuver.view.MapboxPrimaryManeuver
+import com.mapbox.navigation.tripdata.maneuver.model.PrimaryManeuverFactory
+import com.mapbox.navigation.tripdata.maneuver.model.TextComponentNode
+import java.time.Instant
 
 @SuppressLint("ViewConstructor")
 class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout(context.baseContext) {
@@ -115,6 +125,15 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
   private var isNavigating = false
   private var navigationInitialized = false
   private var mapStyle: String = NavigationStyles.NAVIGATION_DAY_STYLE
+  private var isWaypointArrived = false;
+  private var isDestinationArrived = false;
+  private var lastArrivedLegIndex: Int? = null
+  private var waypointTitle: String = "";
+
+  private fun resetArrivalFlags() {
+    isWaypointArrived = false
+    isDestinationArrived = false
+  }
 
   private val rerouteRunnable = Runnable {
     reroutePending = false
@@ -405,6 +424,8 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
   /**
    * Gets notified with progress along the currently active route.
    */
+  @RequiresApi(Build.VERSION_CODES.O)
+  @OptIn(com.mapbox.navigation.base.ExperimentalMapboxNavigationAPI::class)
   private val routeProgressObserver = RouteProgressObserver { routeProgress ->
     // update the camera position to account for the progressed fragment of the route
     if (routeProgress.fractionTraveled.toDouble() != 0.0) {
@@ -445,9 +466,62 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
           .stepDistanceTextAppearance(R.style.StepDistanceRemainingAppearance)
           .build()
 
-        binding.maneuverView.visibility = View.VISIBLE
-        binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
-        binding.maneuverView.renderManeuvers(maneuvers)
+        if(isWaypointArrived){
+          val currentTime = Instant.now()
+          val textNode = TextComponentNode.Builder()
+            .text("You have arrived at $waypointTitle")
+            .build()
+          val textComp = Component(
+            BannerComponents.TEXT,
+            textNode
+          )
+
+          val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
+            id = "arrival_$currentTime",
+            text = "You have arrived at $destinationTitle",
+            type = null,
+            degrees = null,
+            modifier = null,
+            drivingSide = null,
+            componentList = listOf(textComp)
+          )
+
+          binding.maneuverView.visibility = View.VISIBLE
+          binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+          binding.maneuverView.renderPrimary(primaryManeuver,null)
+        }
+        else if (isDestinationArrived){
+          val currentTime = Instant.now()
+          val textNode = TextComponentNode.Builder()
+            .text("You have arrived at $destinationTitle")
+            .build()
+          val textComp = Component(
+            BannerComponents.TEXT,
+            textNode
+          )
+
+          val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
+            id = "arrival_$currentTime",
+            text = "You have arrived at $destinationTitle",
+            type = null,
+            degrees = null,
+            modifier = null,
+            drivingSide = null,
+            componentList = listOf(textComp)
+          )
+
+          binding.maneuverView.visibility = View.VISIBLE
+          binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+          binding.maneuverView.renderPrimary(primaryManeuver,null)
+        }
+        else {
+
+          binding.maneuverView.visibility = View.VISIBLE
+          binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+          binding.maneuverView.renderManeuvers(maneuvers)
+        }
+
+
       }
     )
 
@@ -657,9 +731,10 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
   }
 
   private fun onDestroy() {
+    resetArrivalFlags()
     maneuverApi.cancel()
     routeLineApi.cancel()
-    routeLineView.cancel()
+    routeLineView.cancel()ßß
     speechApi.cancel()
     voiceInstructionsPlayer?.shutdown()
     isNavigating = false
@@ -708,14 +783,23 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
   private val arrivalObserver = object : ArrivalObserver {
 
     override fun onWaypointArrival(routeProgress: RouteProgress) {
+      lastArrivedLegIndex = routeProgress.currentLegProgress?.legIndex
+      waypointTitle = waypointLegs
+        .firstOrNull { it.index == lastArrivedLegIndex }  // comes from the names you passed in RouteOptions
+        ?.name ?: "Waypoint"
+
+      isWaypointArrived = true
       onArrival(routeProgress)
     }
 
     override fun onNextRouteLegStart(routeLegProgress: RouteLegProgress) {
       // do something when the user starts a new leg
+      resetArrivalFlags()
     }
 
     override fun onFinalDestinationArrival(routeProgress: RouteProgress) {
+      lastArrivedLegIndex = routeProgress.currentLegProgress?.legIndex
+      isDestinationArrived = true
       onArrival(routeProgress)
     }
   }
@@ -788,7 +872,7 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
           val polyline = route.geometry()
           val distance = route.distance()
           val duration = route.duration()
-          
+
           sendRouteDetailsToReact(polyline, distance, duration)
           setRouteAndStartNavigation(routes)
         }
@@ -929,7 +1013,7 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
     this.mapStyle = style
     Log.d("MapboxNavigationView", "Setting map style: $style")
     binding.mapView.mapboxMap.style?.let {
-      binding.mapView.mapboxMap.loadStyle(style) 
+      binding.mapView.mapboxMap.loadStyle(style)
     }
   }
 

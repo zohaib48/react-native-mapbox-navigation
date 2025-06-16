@@ -189,9 +189,10 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
                 NavigationSettings.shared.voiceMuted = strongSelf.mute
                 NavigationSettings.shared.distanceUnit = strongSelf.distanceUnit == "imperial" ? .mile : .kilometer
 
-                if let mapStyle = strongSelf.mapStyle as String? {
-                  vc.navigationMapView?.mapView?.mapboxMap.style.uri = StyleURI(rawValue: mapStyle)
-                }
+                let styleString = (strongSelf.mapStyle as String?) ?? StyleURI.navigationDay.rawValue
+                guard let styleURI = StyleURI(rawValue: styleString) else { return }
+                
+                vc.navigationMapView?.mapView.mapboxMap.loadStyleURI(styleURI){ _ in }
 
                 vc.delegate = strongSelf
 
@@ -378,6 +379,8 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
             "longitude": waypoint.coordinate.longitude,
             "latitude": waypoint.coordinate.latitude,
         ])
+
+        
         return true
     }
 }
