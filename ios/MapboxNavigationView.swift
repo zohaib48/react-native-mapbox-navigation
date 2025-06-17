@@ -2,6 +2,7 @@ import MapboxCoreNavigation
 import MapboxNavigation
 import MapboxDirections
 import MapboxMaps
+import Polyline
 
 extension UIView {
     var parentViewController: UIViewController? {
@@ -170,10 +171,11 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
             case .success(let response):
                 strongSelf.indexedRouteResponse = response
               guard let route = response.routeResponse.routes?.first else { return }
+              let coord = route.shape?.coordinates
 
-              let polyline = route.description
-                let distance = route.distance
-                let duration = route.expectedTravelTime
+              let polyline = Polyline(coordinates: coord!, precision: 1e6).encodedPolyline
+              let distance = route.distance
+              let duration = route.expectedTravelTime
 
               self?.onRouteReady?(["polyline": polyline,
                                          "distance": distance,
