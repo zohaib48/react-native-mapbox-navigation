@@ -734,7 +734,7 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
     resetArrivalFlags()
     maneuverApi.cancel()
     routeLineApi.cancel()
-    routeLineView.cancel()ßß
+    routeLineView.cancel()
     speechApi.cancel()
     voiceInstructionsPlayer?.shutdown()
     isNavigating = false

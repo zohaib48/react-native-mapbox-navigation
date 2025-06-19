@@ -257,6 +257,10 @@ const styles = StyleSheet.create({
   - 'walking': Navigation for pedestrians.
   - 'cycling': Navigation optimized for cyclists.
 
+- `mapStyle`: renders custom mapstyle use mapbox style url generated from mapbox studio
+
+- `onRouteReady`: returns polyline, distance and duriation
+
 ## Contributing
 
 See the [contributing guide](CONTRIBUTING.md) to learn how to contribute to the repository and the development workflow.
