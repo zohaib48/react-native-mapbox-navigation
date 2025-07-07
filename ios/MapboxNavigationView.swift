@@ -3,6 +3,7 @@ import MapboxNavigation
 import MapboxDirections
 import MapboxMaps
 import Polyline
+import CoreLocation
 
 extension UIView {
     var parentViewController: UIViewController? {
@@ -27,7 +28,7 @@ public protocol MapboxCarPlayNavigationDelegate {
     func endNavigation()
 }
 
-public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
+public class MapboxNavigationView: UIView, NavigationViewControllerDelegate, CLLocationManagerDelegate {
     public weak var navViewController: NavigationViewController?
     public var indexedRouteResponse: IndexedRouteResponse?
     private var navigationInitialized = false
@@ -92,11 +93,19 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
     @objc var vehicleMaxWidth: NSNumber?
     @objc var onRouteReady: RCTDirectEventBlock?
 
+    // CLLocationManager for user location
+    private let locationManager = CLLocationManager()
+    private var userLocation: CLLocationCoordinate2D?
+    private var pendingNavigation = false
+    private var pendingReroute = false
 
     override init(frame: CGRect) {
         self.embedded = false
         self.embedding = false
         super.init(frame: frame)
+        locationManager.delegate = self
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -130,19 +139,29 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
     private func embed() {
         guard startOrigin.count == 2 && destination.count == 2 else { return }
 
+        // Wait for user location before building the route
+        if userLocation == nil {
+            pendingNavigation = true
+            return
+        }
+        pendingNavigation = false
         embedding = true
         self.isNavigating = true
 
-        let originWaypoint = Waypoint(coordinate: CLLocationCoordinate2D(latitude: startOrigin[1] as! CLLocationDegrees, longitude: startOrigin[0] as! CLLocationDegrees))
-        var waypointsArray = [originWaypoint]
-
+        // Always force: [userLocation, startOrigin, ...waypoints, destination]
+        var waypointsArray: [Waypoint] = []
+        if let userLoc = userLocation {
+            waypointsArray.append(Waypoint(coordinate: userLoc))
+        } else {
+            waypointsArray.append(Waypoint(coordinate: CLLocationCoordinate2D(latitude: startOrigin[1] as! CLLocationDegrees, longitude: startOrigin[0] as! CLLocationDegrees)))
+        }
+        // Start origin: do NOT assign a name
+        waypointsArray.append(Waypoint(coordinate: CLLocationCoordinate2D(latitude: startOrigin[1] as! CLLocationDegrees, longitude: startOrigin[0] as! CLLocationDegrees)))
         waypointsArray.append(contentsOf: waypoints)
-
         let destinationWaypoint = Waypoint(coordinate: CLLocationCoordinate2D(latitude: destination[1] as! CLLocationDegrees, longitude: destination[0] as! CLLocationDegrees), name: destinationTitle as String)
         waypointsArray.append(destinationWaypoint)
 
         let profile: MBDirectionsProfileIdentifier
-
         switch travelMode {
             case "cycling":
                 profile = .cycling
@@ -155,7 +174,6 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
         }
 
         let options = NavigationRouteOptions(waypoints: waypointsArray, profileIdentifier: profile)
-
         let locale = self.language.replacingOccurrences(of: "-", with: "_")
         options.locale = Locale(identifier: (language as String).replacingOccurrences(of: "-", with: "_"))
         options.distanceMeasurementSystem =  distanceUnit == "imperial" ? .imperial : .metric
@@ -300,16 +318,23 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
             let destLon  = destination[0] as? NSNumber
         else { return }
 
-        // build fresh options
+        // Wait for user location before rerouting
+        if userLocation == nil {
+            pendingReroute = true
+            return
+        }
+        pendingReroute = false
+        // Always force: [userLocation, startOrigin, ...waypoints, destination]
         var coords: [Waypoint] = []
-        coords.append(.init(coordinate:
-            CLLocationCoordinate2D(latitude: startLat.doubleValue,
-                                    longitude: startLon.doubleValue)))
+        if let userLoc = userLocation {
+            coords.append(.init(coordinate: userLoc))
+        } else {
+            coords.append(.init(coordinate: CLLocationCoordinate2D(latitude: startLat.doubleValue, longitude: startLon.doubleValue)))
+        }
+        // Start origin: do NOT assign a name
+        coords.append(.init(coordinate: CLLocationCoordinate2D(latitude: startLat.doubleValue, longitude: startLon.doubleValue)))
         coords += waypoints
-        coords.append(.init(coordinate:
-            CLLocationCoordinate2D(latitude: destLat.doubleValue,
-                                    longitude: destLon.doubleValue),
-            name: destinationTitle as String))
+        coords.append(.init(coordinate: CLLocationCoordinate2D(latitude: destLat.doubleValue, longitude: destLon.doubleValue), name: destinationTitle as String))
 
         let profile: MBDirectionsProfileIdentifier = {
             switch travelMode {
@@ -384,5 +409,18 @@ public class MapboxNavigationView: UIView, NavigationViewControllerDelegate {
 
         
         return true
+    }
+
+    // CLLocationManagerDelegate
+    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        userLocation = locations.last?.coordinate
+        if pendingNavigation {
+            pendingNavigation = false
+            embed()
+        }
+        if pendingReroute {
+            pendingReroute = false
+            performReroute()
+        }
     }
 }

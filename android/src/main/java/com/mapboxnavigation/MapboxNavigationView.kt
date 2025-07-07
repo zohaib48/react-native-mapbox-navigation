@@ -102,6 +102,9 @@ import com.mapbox.navigation.ui.components.maneuver.view.MapboxPrimaryManeuver
 import com.mapbox.navigation.tripdata.maneuver.model.PrimaryManeuverFactory
 import com.mapbox.navigation.tripdata.maneuver.model.TextComponentNode
 import java.time.Instant
+// In your imports:
+import com.mapbox.turf.TurfMeasurement
+import com.mapbox.turf.TurfConstants
 
 @SuppressLint("ViewConstructor")
 class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout(context.baseContext) {
@@ -109,6 +112,12 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
     private const val BUTTON_ANIMATION_DURATION = 1500L
     private const val REROUTE_DELAY_MS = 500L
   }
+
+private var isRoutingToOrigin = false
+private var hasArrivedAtOrigin = false
+private val START_THRESHOLD_METERS = 1.0
+
+
 
   private var origin: Point? = null
   private var destination: Point? = null
@@ -129,6 +138,8 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
   private var isDestinationArrived = false;
   private var lastArrivedLegIndex: Int? = null
   private var waypointTitle: String = "";
+  private var waypointAnnotationManager: PointAnnotationManager? = null
+  private var waypointAnnotations: MutableList<PointAnnotation> = mutableListOf()
 
   private fun resetArrivalFlags() {
     isWaypointArrived = false
@@ -387,38 +398,81 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
       // not handled
     }
 
-    override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherResult) {
-      val enhancedLocation = locationMatcherResult.enhancedLocation
-      // update location puck's position on the map
-      navigationLocationProvider.changePosition(
+  @SuppressLint("MissingPermission")
+override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherResult) {
+    val enhancedLocation = locationMatcherResult.enhancedLocation
+
+    // 1. Update the puck and camera
+    navigationLocationProvider.changePosition(
         location = enhancedLocation,
-        keyPoints = locationMatcherResult.keyPoints,
-      )
+        keyPoints = locationMatcherResult.keyPoints
+    )
+    viewportDataSource.onLocationChanged(enhancedLocation)
+    viewportDataSource.evaluate()
 
-      // update camera position to account for new location
-      viewportDataSource.onLocationChanged(enhancedLocation)
-      viewportDataSource.evaluate()
-
-      // if this is the first location update the activity has received,
-      // it's best to immediately move the camera to the current user location
-      if (!firstLocationUpdateReceived) {
+    // 2. First‐fix camera to user on initial update
+    if (!firstLocationUpdateReceived) {
         firstLocationUpdateReceived = true
         navigationCamera.requestNavigationCameraToOverview(
-          stateTransitionOptions = NavigationCameraTransitionOptions.Builder()
-            .maxDuration(0) // instant transition
-            .build()
+            stateTransitionOptions = NavigationCameraTransitionOptions.Builder()
+                .maxDuration(0) // instant
+                .build()
         )
-      }
-
-      val event = Arguments.createMap()
-      event.putDouble("longitude", enhancedLocation.longitude)
-      event.putDouble("latitude", enhancedLocation.latitude)
-      event.putDouble("heading", enhancedLocation.bearing ?: 0.0)
-      event.putDouble("accuracy", enhancedLocation.horizontalAccuracy ?: 0.0)
-      context
-        .getJSModule(RCTEventEmitter::class.java)
-        .receiveEvent(id, "onLocationChange", event)
     }
+
+    // 3. Emit location to React Native
+    Arguments.createMap().also { event ->
+        event.putDouble("longitude", enhancedLocation.longitude)
+        event.putDouble("latitude", enhancedLocation.latitude)
+        event.putDouble("heading", enhancedLocation.bearing ?: 0.0)
+        event.putDouble("accuracy", enhancedLocation.horizontalAccuracy ?: 0.0)
+        context.getJSModule(RCTEventEmitter::class.java)
+            .receiveEvent(id, "onLocationChange", event)
+    }
+
+    // 4. Always build a route from current location to startOrigin, waypoints, destination
+    origin?.let { startOrigin ->
+        val userPoint = Point.fromLngLat(
+            enhancedLocation.longitude,
+            enhancedLocation.latitude
+        )
+        val coordinatesList = mutableListOf<Point>()
+        coordinatesList.add(userPoint)
+        coordinatesList.add(startOrigin)
+        coordinatesList.addAll(waypoints)
+        destination?.let { coordinatesList.add(it) }
+        mapboxNavigation?.requestRoutes(
+            RouteOptions.builder()
+                .applyDefaultNavigationOptions()
+                .applyLanguageAndVoiceUnitOptions(context)
+                .coordinatesList(coordinatesList)
+                .profile(travelMode)
+                .steps(true)
+                .build(),
+            object : NavigationRouterCallback {
+                override fun onRoutesReady(
+                    routes: List<NavigationRoute>,
+                    @RouterOrigin routerOrigin: String
+                ) {
+                    mapboxNavigation?.setNavigationRoutes(routes)
+                    mapboxNavigation?.startTripSession(withForegroundService = true)
+                }
+                override fun onFailure(
+                    reasons: List<RouterFailure>,
+                    routeOptions: RouteOptions
+                ) { Log.e("Routing", "Failed to build route: $reasons") }
+                override fun onCanceled(
+                    routeOptions: RouteOptions,
+                    @RouterOrigin routerOrigin: String
+                ) { /* no‐op */ }
+            }
+        )
+        return
+    }
+
+    // If no origin, do nothing
+}
+
   }
 
   /**
@@ -681,16 +735,18 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
     )
 
     // load map style
-    binding.mapView.mapboxMap.loadStyle(mapStyle) {
-      // Ensure that the route line related layers are present before the route arrow
-      val dotBitmap = BitmapFactory.decodeResource(context.resources,R.drawable.red_dot)
-      it.addImage(
+ // load map style
+binding.mapView.mapboxMap.loadStyle(mapStyle) {
+    // Ensure that the route line related layers are present before the route arrow
+    val dotBitmap = BitmapFactory.decodeResource(context.resources,R.drawable.red_dot)
+    it.addImage(
         "customer_icon",
         dotBitmap
-      )
-      routeLineView.initializeLayers(it)
-      updateCustomerAnnotation()
-    }
+    )
+    routeLineView.initializeLayers(it)
+    updateCustomerAnnotation()
+    updateWaypointAnnotations()
+}
 
     // initialize view interactions
     binding.stop.setOnClickListener {
@@ -759,6 +815,20 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
 
     startRoute()
   }
+
+  private fun startRoute() {
+    isNavigating = true
+    mapboxNavigation?.registerRoutesObserver(routesObserver)
+    mapboxNavigation?.registerArrivalObserver(arrivalObserver)
+    mapboxNavigation?.registerRouteProgressObserver(routeProgressObserver)
+    mapboxNavigation?.registerLocationObserver(locationObserver)
+    mapboxNavigation?.registerVoiceInstructionsObserver(voiceInstructionsObserver)
+    mapboxNavigation?.startTripSession(withForegroundService = true)
+    // Reset arrival flags so arrivalObserver handles origin → checkpoint correctly
+    hasArrivedAtOrigin = true  // prevent re-routing back to origin
+    isRoutingToOrigin = false
+    updateRoute()
+}
 
   private fun scheduleReroute() {
     if (!isNavigating) return
@@ -906,21 +976,6 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
 
   }
 
-  @SuppressLint("MissingPermission")
-  private fun startRoute() {
-    isNavigating = true
-    // register event listeners
-    mapboxNavigation?.registerRoutesObserver(routesObserver)
-    mapboxNavigation?.registerArrivalObserver(arrivalObserver)
-    mapboxNavigation?.registerRouteProgressObserver(routeProgressObserver)
-    mapboxNavigation?.registerLocationObserver(locationObserver)
-    mapboxNavigation?.registerVoiceInstructionsObserver(voiceInstructionsObserver)
-
-    mapboxNavigation?.startTripSession(withForegroundService = true)
-
-    updateRoute()
-  }
-
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
     mapboxNavigation?.unregisterRoutesObserver(routesObserver)
@@ -984,6 +1039,7 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
 
   fun setWaypoints(waypoints: List<Point>) {
     this.waypoints = waypoints
+    updateWaypointAnnotations()
     if (isNavigating) scheduleReroute()
   }
 
@@ -1051,4 +1107,106 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
       manager.update(listOf(customerAnnotation!!))
     }
   }
+
+private fun updateWaypointAnnotations() {
+    val mapView = binding.mapView
+    // Remove old annotations
+    waypointAnnotationManager?.deleteAll()
+    waypointAnnotations.clear()
+    if (waypoints.isEmpty() && destination == null) return
+    
+    // Only proceed if style is loaded
+    mapView.mapboxMap.getStyle { style ->
+        if (waypointAnnotationManager == null) {
+            waypointAnnotationManager = mapView.annotations.createPointAnnotationManager()
+        }
+        val manager = waypointAnnotationManager!!
+        
+        // Add waypoint annotations with numbers (do NOT number startOrigin)
+        waypoints.forEachIndexed { idx, point ->
+            val number = idx + 1 // Numbering starts at 1 for waypoints only
+            val iconId = "waypoint_icon_$number"
+            // Create and add the numbered bitmap to the style
+            val bitmap = createNumberedWaypointBitmap(number)
+            style.addImage(iconId, bitmap)
+            val opts = PointAnnotationOptions()
+                .withPoint(point)
+                .withIconImage(iconId)
+                .withIconSize(1.0)
+            val annotation = manager.create(opts)
+            waypointAnnotations.add(annotation)
+        }
+        // Add destination annotation with flag icon
+        destination?.let { destPoint ->
+            val flagIconId = "destination_flag_icon"
+            if (style.getStyleImage(flagIconId) == null) {
+                val flagBitmap = createDestinationFlagBitmap()
+                style.addImage(flagIconId, flagBitmap)
+            }
+            val opts = PointAnnotationOptions()
+                .withPoint(destPoint)
+                .withIconImage(flagIconId)
+                .withIconSize(1.0)
+            val annotation = manager.create(opts)
+            waypointAnnotations.add(annotation)
+        }
+    }
+}
+
+private fun createDestinationFlagBitmap(): android.graphics.Bitmap {
+    val width = 48
+    val height = 64
+    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.graphics.Paint()
+    paint.isAntiAlias = true
+    
+    // Draw flag pole
+    paint.color = android.graphics.Color.parseColor("#8B4513") // Brown
+    paint.strokeWidth = 4f
+    canvas.drawLine(width * 0.15f, height * 0.2f, width * 0.15f, height * 0.95f, paint)
+    
+    // Draw flag
+    paint.style = android.graphics.Paint.Style.FILL
+    paint.color = android.graphics.Color.parseColor("#FF3B30") // Red flag
+    val flagPath = android.graphics.Path()
+    flagPath.moveTo(width * 0.2f, height * 0.2f)
+    flagPath.lineTo(width * 0.85f, height * 0.35f)
+    flagPath.lineTo(width * 0.2f, height * 0.5f)
+    flagPath.close()
+    canvas.drawPath(flagPath, paint)
+    
+    // Draw flag border
+    paint.style = android.graphics.Paint.Style.STROKE
+    paint.color = android.graphics.Color.parseColor("#D70015") // Darker red
+    paint.strokeWidth = 2f
+    canvas.drawPath(flagPath, paint)
+    
+    return bitmap
+}
+
+private fun createNumberedWaypointBitmap(number: Int): android.graphics.Bitmap {
+    val size = 64
+    val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.graphics.Paint()
+    paint.isAntiAlias = true
+    // Draw blue circle (iOS style)
+    paint.color = android.graphics.Color.parseColor("#007AFF") // iOS blue
+    canvas.drawCircle(size / 2f, size / 2f, size / 2.2f, paint)
+    // Draw white border
+    paint.style = android.graphics.Paint.Style.STROKE
+    paint.color = android.graphics.Color.WHITE
+    paint.strokeWidth = 6f
+    canvas.drawCircle(size / 2f, size / 2f, size / 2.2f - 3f, paint)
+    // Draw number
+    paint.style = android.graphics.Paint.Style.FILL
+    paint.color = android.graphics.Color.WHITE
+    paint.textSize = size / 2f + 4f
+    paint.textAlign = android.graphics.Paint.Align.CENTER
+    paint.isFakeBoldText = true
+    val textY = size / 2f - (paint.descent() + paint.ascent()) / 2
+    canvas.drawText(number.toString(), size / 2f, textY, paint)
+    return bitmap
+}
 }
