@@ -336,7 +336,7 @@ private val START_THRESHOLD_METERS = 1.0
        * defaults will be used internally by the builder.
        */
       .routeLineColorResources(RouteLineColorResources.Builder().build())
-      .routeLineBelowLayerId("road-label-navigation")
+      .routeLineBelowLayerId("road-label")
       .build()
   }
 
@@ -501,89 +501,93 @@ override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherRe
     }
 
     // update top banner with maneuver instructions
-    val maneuvers = maneuverApi.getManeuvers(routeProgress)
-    maneuvers.fold(
-      { error ->
-        Log.w("Maneuvers error:", error.throwable)
-      },
-      {
-        val maneuverViewOptions = ManeuverViewOptions.Builder()
-          .primaryManeuverOptions(
-            ManeuverPrimaryOptions.Builder()
-              .textAppearance(R.style.PrimaryManeuverTextAppearance)
+    if (::maneuverApi.isInitialized) {
+        val maneuvers = maneuverApi.getManeuvers(routeProgress)
+        maneuvers.fold(
+          { error ->
+            Log.w("Maneuvers error:", error.throwable)
+          },
+          {
+            val maneuverViewOptions = ManeuverViewOptions.Builder()
+              .primaryManeuverOptions(
+                ManeuverPrimaryOptions.Builder()
+                  .textAppearance(R.style.PrimaryManeuverTextAppearance)
+                  .build()
+              )
+              .secondaryManeuverOptions(
+                ManeuverSecondaryOptions.Builder()
+                  .textAppearance(R.style.ManeuverTextAppearance)
+                  .build()
+              )
+              .subManeuverOptions(
+                ManeuverSubOptions.Builder()
+                  .textAppearance(R.style.ManeuverTextAppearance)
+                  .build()
+              )
+              .stepDistanceTextAppearance(R.style.StepDistanceRemainingAppearance)
               .build()
-          )
-          .secondaryManeuverOptions(
-            ManeuverSecondaryOptions.Builder()
-              .textAppearance(R.style.ManeuverTextAppearance)
-              .build()
-          )
-          .subManeuverOptions(
-            ManeuverSubOptions.Builder()
-              .textAppearance(R.style.ManeuverTextAppearance)
-              .build()
-          )
-          .stepDistanceTextAppearance(R.style.StepDistanceRemainingAppearance)
-          .build()
 
-        if(isWaypointArrived){
-          val currentTime = Instant.now()
-          val textNode = TextComponentNode.Builder()
-            .text("You have arrived at $waypointTitle")
-            .build()
-          val textComp = Component(
-            BannerComponents.TEXT,
-            textNode
-          )
+            if(isWaypointArrived){
+              val currentTime = Instant.now()
+              val textNode = TextComponentNode.Builder()
+                .text("You have arrived at $waypointTitle")
+                .build()
+              val textComp = Component(
+                BannerComponents.TEXT,
+                textNode
+              )
 
-          val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
-            id = "arrival_$currentTime",
-            text = "You have arrived at $destinationTitle",
-            type = null,
-            degrees = null,
-            modifier = null,
-            drivingSide = null,
-            componentList = listOf(textComp)
-          )
+              val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
+                id = "arrival_$currentTime",
+                text = "You have arrived at $destinationTitle",
+                type = null,
+                degrees = null,
+                modifier = null,
+                drivingSide = null,
+                componentList = listOf(textComp)
+              )
 
-          binding.maneuverView.visibility = View.VISIBLE
-          binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
-          binding.maneuverView.renderPrimary(primaryManeuver,null)
-        }
-        else if (isDestinationArrived){
-          val currentTime = Instant.now()
-          val textNode = TextComponentNode.Builder()
-            .text("You have arrived at $destinationTitle")
-            .build()
-          val textComp = Component(
-            BannerComponents.TEXT,
-            textNode
-          )
+              binding.maneuverView.visibility = View.VISIBLE
+              binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+              binding.maneuverView.renderPrimary(primaryManeuver,null)
+            }
+            else if (isDestinationArrived){
+              val currentTime = Instant.now()
+              val textNode = TextComponentNode.Builder()
+                .text("You have arrived at $destinationTitle")
+                .build()
+              val textComp = Component(
+                BannerComponents.TEXT,
+                textNode
+              )
 
-          val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
-            id = "arrival_$currentTime",
-            text = "You have arrived at $destinationTitle",
-            type = null,
-            degrees = null,
-            modifier = null,
-            drivingSide = null,
-            componentList = listOf(textComp)
-          )
+              val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
+                id = "arrival_$currentTime",
+                text = "You have arrived at $destinationTitle",
+                type = null,
+                degrees = null,
+                modifier = null,
+                drivingSide = null,
+                componentList = listOf(textComp)
+              )
 
-          binding.maneuverView.visibility = View.VISIBLE
-          binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
-          binding.maneuverView.renderPrimary(primaryManeuver,null)
-        }
-        else {
+              binding.maneuverView.visibility = View.VISIBLE
+              binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+              binding.maneuverView.renderPrimary(primaryManeuver,null)
+            }
+            else {
 
-          binding.maneuverView.visibility = View.VISIBLE
-          binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
-          binding.maneuverView.renderManeuvers(maneuvers)
-        }
+              binding.maneuverView.visibility = View.VISIBLE
+              binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+              binding.maneuverView.renderManeuvers(maneuvers)
+            }
 
 
-      }
-    )
+          }
+        )
+    } else {
+        Log.w("MapboxNavigationView", "maneuverApi not initialized yet")
+    }
 
 
 val update = tripProgressApi.getTripProgress(routeProgress)
@@ -757,14 +761,30 @@ binding.arrivalText.text = etaFormatted
 
     // load map style
  // load map style
+// load map style
 binding.mapView.mapboxMap.loadStyle(mapStyle) {
-    // Ensure that the route line related layers are present before the route arrow
+    // Add custom images first
     val dotBitmap = BitmapFactory.decodeResource(context.resources,R.drawable.red_dot)
     it.addImage(
         "customer_icon",
         dotBitmap
     )
+    
+    // Initialize route line layers first
     routeLineView.initializeLayers(it)
+    
+    // Then initialize location puck to ensure it's on top
+    binding.mapView.location.apply {
+        setLocationProvider(navigationLocationProvider)
+        this.locationPuck = LocationPuck2D(
+            bearingImage = ImageHolder.Companion.from(
+                com.mapbox.navigation.ui.maps.R.drawable.mapbox_navigation_puck_icon
+            )
+        )
+        puckBearingEnabled = true
+        enabled = true
+    }
+    
     updateCustomerAnnotation()
     updateWaypointAnnotations()
 }
@@ -845,17 +865,7 @@ private fun formatDistance(meters: Float): String {
   }
 
   private fun startNavigation() {
-    // initialize location puck
-    binding.mapView.location.apply {
-      setLocationProvider(navigationLocationProvider)
-      this.locationPuck = LocationPuck2D(
-        bearingImage = ImageHolder.Companion.from(
-          com.mapbox.navigation.ui.maps.R.drawable.mapbox_navigation_puck_icon
-        )
-      )
-      puckBearingEnabled = true
-      enabled = true
-    }
+  
 
     startRoute()
   }
