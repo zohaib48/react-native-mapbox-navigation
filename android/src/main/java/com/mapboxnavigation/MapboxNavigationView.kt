@@ -662,6 +662,20 @@ binding.arrivalText.text = etaFormatted
 
   init {
     onCreate()
+    // Eagerly initialize maneuverApi and tripProgressApi with default values to avoid uninitialized access
+    val unitType = if (distanceUnit == "imperial") UnitType.IMPERIAL else UnitType.METRIC
+    val distanceFormatterOptions = DistanceFormatterOptions.Builder(context)
+        .unitType(unitType)
+        .build()
+    maneuverApi = MapboxManeuverApi(MapboxDistanceFormatter(distanceFormatterOptions))
+    tripProgressApi = MapboxTripProgressApi(
+        TripProgressUpdateFormatter.Builder(context)
+            .distanceRemainingFormatter(DistanceRemainingFormatter(distanceFormatterOptions))
+            .timeRemainingFormatter(TimeRemainingFormatter(context))
+            .percentRouteTraveledFormatter(PercentDistanceTraveledFormatter())
+            .estimatedTimeToArrivalFormatter(EstimatedTimeToArrivalFormatter(context, TimeFormat.NONE_SPECIFIED))
+            .build()
+    )
   }
 
   private fun onCreate() {
@@ -721,33 +735,31 @@ binding.arrivalText.text = etaFormatted
       viewportDataSource.followingPadding = followingPadding
     }
 
-    // make sure to use the same DistanceFormatterOptions across different features
+    // Always re-initialize maneuverApi and tripProgressApi with up-to-date options
     val unitType = if (distanceUnit == "imperial") UnitType.IMPERIAL else UnitType.METRIC
     val distanceFormatterOptions = DistanceFormatterOptions.Builder(context)
-      .unitType(unitType)
-      .build()
+        .unitType(unitType)
+        .build()
 
-    // initialize maneuver api that feeds the data to the top banner maneuver view
     maneuverApi = MapboxManeuverApi(
-      MapboxDistanceFormatter(distanceFormatterOptions)
+        MapboxDistanceFormatter(distanceFormatterOptions)
     )
 
-    // initialize bottom progress view
     tripProgressApi = MapboxTripProgressApi(
-      TripProgressUpdateFormatter.Builder(context)
-        .distanceRemainingFormatter(
-          DistanceRemainingFormatter(distanceFormatterOptions)
-        )
-        .timeRemainingFormatter(
-          TimeRemainingFormatter(context)
-        )
-        .percentRouteTraveledFormatter(
-          PercentDistanceTraveledFormatter()
-        )
-        .estimatedTimeToArrivalFormatter(
-          EstimatedTimeToArrivalFormatter(context, TimeFormat.NONE_SPECIFIED)
-        )
-        .build()
+        TripProgressUpdateFormatter.Builder(context)
+            .distanceRemainingFormatter(
+                DistanceRemainingFormatter(distanceFormatterOptions)
+            )
+            .timeRemainingFormatter(
+                TimeRemainingFormatter(context)
+            )
+            .percentRouteTraveledFormatter(
+                PercentDistanceTraveledFormatter()
+            )
+            .estimatedTimeToArrivalFormatter(
+                EstimatedTimeToArrivalFormatter(context, TimeFormat.NONE_SPECIFIED)
+            )
+            .build()
     )
     // initialize voice instructions api and the voice instruction player
     speechApi = MapboxSpeechApi(
