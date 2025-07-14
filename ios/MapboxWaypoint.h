@@ -8,5 +8,6 @@
 @property (nullable, assign) NSString* name;
 @property (nonatomic, assign) Boolean separatesLegs;
 @property (nonatomic, assign) CLLocationCoordinate2D coordinate;
+@property (nonatomic, assign) BOOL isWaypoint;
 
 @end

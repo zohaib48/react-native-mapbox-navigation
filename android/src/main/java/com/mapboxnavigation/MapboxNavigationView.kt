@@ -105,6 +105,12 @@ import java.time.Instant
 // In your imports:
 import com.mapbox.turf.TurfMeasurement
 import com.mapbox.turf.TurfConstants
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.TimeZone
+
+
+data class CustomWaypoint(val point: Point, val isWaypoint: Boolean)
 
 @SuppressLint("ViewConstructor")
 class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout(context.baseContext) {
@@ -123,7 +129,7 @@ private val START_THRESHOLD_METERS = 1.0
   private var destination: Point? = null
   private var customerLocation: Point? = null
   private var destinationTitle: String = "Destination"
-  private var waypoints: List<Point> = listOf()
+  private var waypoints: List<CustomWaypoint> = listOf()
   private var waypointLegs: List<WaypointLegs> = listOf()
   private var distanceUnit: String = DirectionsCriteria.IMPERIAL
   private var locale = Locale.getDefault()
@@ -439,7 +445,7 @@ override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherRe
         val coordinatesList = mutableListOf<Point>()
         coordinatesList.add(userPoint)
         coordinatesList.add(startOrigin)
-        coordinatesList.addAll(waypoints)
+        coordinatesList.addAll(waypoints.map { it.point })
         destination?.let { coordinatesList.add(it) }
         mapboxNavigation?.requestRoutes(
             RouteOptions.builder()
@@ -579,10 +585,25 @@ override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherRe
       }
     )
 
-    // update bottom trip progress summary
-    binding.tripProgressView.render(
-      tripProgressApi.getTripProgress(routeProgress)
-    )
+
+val update = tripProgressApi.getTripProgress(routeProgress)
+
+binding.tripProgressCard.visibility = View.VISIBLE
+
+val durationSeconds = routeProgress.durationRemaining
+val distanceMeters = routeProgress.distanceRemaining
+
+binding.timeText.text = formatDuration(durationSeconds)
+binding.distanceText.text = formatDistance(distanceMeters)
+val etaMillis = System.currentTimeMillis() + (durationSeconds * 1000).toLong()
+val etaFormatted = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(etaMillis))
+binding.arrivalText.text = etaFormatted
+
+
+
+
+
+
 
     val event = Arguments.createMap()
     event.putDouble("distanceTraveled", routeProgress.distanceTraveled.toDouble())
@@ -786,6 +807,29 @@ binding.mapView.mapboxMap.loadStyle(mapStyle) {
     }
   }
 
+private fun formatDuration(seconds: Double): String {
+    val minutes = (seconds / 60).toInt()
+    val hours = minutes / 60
+    val remainingMinutes = minutes % 60
+
+    return if (hours > 0) {
+        "$hours h $remainingMinutes min"
+    } else {
+        "$remainingMinutes min"
+    }
+}
+
+private fun formatDistance(meters: Float): String {
+    return if (meters >= 1000) {
+        String.format("%.1f km", meters / 1000)
+    } else {
+        String.format("%.0f m", meters)
+    }
+}
+
+
+
+
   private fun onDestroy() {
     resetArrivalFlags()
     maneuverApi.cancel()
@@ -842,7 +886,7 @@ binding.mapView.mapboxMap.loadStyle(mapStyle) {
 
     val coordinatesList = mutableListOf<Point>()
     origin?.let { coordinatesList.add(it) }
-    coordinatesList.addAll(waypoints)
+    coordinatesList.addAll(waypoints.map { it.point })
     destination?.let { coordinatesList.add(it) }
 
     findRoute(coordinatesList)
@@ -1037,11 +1081,11 @@ binding.mapView.mapboxMap.loadStyle(mapStyle) {
     if (isNavigating) scheduleReroute()
   }
 
-  fun setWaypoints(waypoints: List<Point>) {
+  fun setWaypoints(waypoints: List<CustomWaypoint>) {
     this.waypoints = waypoints
     updateWaypointAnnotations()
     if (isNavigating) scheduleReroute()
-  }
+}
 
   fun setDirectionUnit(unit: String) {
     this.distanceUnit = unit
@@ -1113,7 +1157,7 @@ private fun updateWaypointAnnotations() {
     // Remove old annotations
     waypointAnnotationManager?.deleteAll()
     waypointAnnotations.clear()
-    if (waypoints.isEmpty() && destination == null) return
+    if (waypoints.isEmpty() && origin == null && destination == null) return
     
     // Only proceed if style is loaded
     mapView.mapboxMap.getStyle { style ->
@@ -1122,12 +1166,26 @@ private fun updateWaypointAnnotations() {
         }
         val manager = waypointAnnotationManager!!
         
-        // Add waypoint annotations with numbers (do NOT number startOrigin)
-        waypoints.forEachIndexed { idx, point ->
-            val number = idx + 1 // Numbering starts at 1 for waypoints only
-            val iconId = "waypoint_icon_$number"
-            // Create and add the numbered bitmap to the style
-            val bitmap = createNumberedWaypointBitmap(number)
+        // Add start (origin) annotation with checkered flag icon
+        origin?.let { startPoint ->
+            val startFlagIconId = "start_checkered_flag_icon"
+            if (style.getStyleImage(startFlagIconId) == null) {
+                val flagBitmap = createCheckeredFlagBitmap()
+                style.addImage(startFlagIconId, flagBitmap)
+            }
+            val opts = PointAnnotationOptions()
+                .withPoint(startPoint)
+                .withIconImage(startFlagIconId)
+                .withIconSize(1.0)
+            val annotation = manager.create(opts)
+            waypointAnnotations.add(annotation)
+        }
+        // Add waypoint annotations with correct icon
+        waypoints.forEachIndexed { idx, customWaypoint ->
+            val point = customWaypoint.point
+            val isWaypoint = customWaypoint.isWaypoint
+            val iconId = if (isWaypoint) "waypoint_pin_icon_$idx" else "waypoint_flag_icon_$idx"
+            val bitmap = if (isWaypoint) createMapPinBitmap() else createDestinationFlagBitmap()
             style.addImage(iconId, bitmap)
             val opts = PointAnnotationOptions()
                 .withPoint(point)
@@ -1136,11 +1194,11 @@ private fun updateWaypointAnnotations() {
             val annotation = manager.create(opts)
             waypointAnnotations.add(annotation)
         }
-        // Add destination annotation with flag icon
+        // Add destination annotation with checkered flag icon
         destination?.let { destPoint ->
-            val flagIconId = "destination_flag_icon"
+            val flagIconId = "destination_checkered_flag_icon"
             if (style.getStyleImage(flagIconId) == null) {
-                val flagBitmap = createDestinationFlagBitmap()
+                val flagBitmap = createCheckeredFlagBitmap()
                 style.addImage(flagIconId, flagBitmap)
             }
             val opts = PointAnnotationOptions()
@@ -1207,6 +1265,79 @@ private fun createNumberedWaypointBitmap(number: Int): android.graphics.Bitmap {
     paint.isFakeBoldText = true
     val textY = size / 2f - (paint.descent() + paint.ascent()) / 2
     canvas.drawText(number.toString(), size / 2f, textY, paint)
+    return bitmap
+}
+
+private fun createMapPinBitmap(): android.graphics.Bitmap {
+    val width = 48
+    val height = 64
+    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.graphics.Paint()
+    paint.isAntiAlias = true
+
+    // Draw pin body
+    paint.color = android.graphics.Color.parseColor("#007AFF") // Blue
+    val ovalRect = android.graphics.RectF(0f, 0f, width.toFloat(), height * 0.75f)
+    canvas.drawOval(ovalRect, paint)
+
+    // Draw pin tip
+    paint.color = android.graphics.Color.parseColor("#007AFF")
+    val path = android.graphics.Path()
+    path.moveTo(width / 2f, height.toFloat())
+    path.lineTo(width * 0.15f, height * 0.75f)
+    path.lineTo(width * 0.85f, height * 0.75f)
+    path.close()
+    canvas.drawPath(path, paint)
+
+    // Draw white circle in center
+    paint.color = android.graphics.Color.WHITE
+    canvas.drawCircle(width / 2f, height * 0.35f, width * 0.15f, paint)
+
+    return bitmap
+}
+
+private fun createCheckeredFlagBitmap(): android.graphics.Bitmap {
+    val width = 48
+    val height = 64
+    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.graphics.Paint()
+    paint.isAntiAlias = true
+
+    // Draw flag pole
+    paint.color = android.graphics.Color.parseColor("#8B4513") // Brown
+    paint.strokeWidth = 4f
+    canvas.drawLine(width * 0.15f, height * 0.2f, width * 0.15f, height * 0.95f, paint)
+
+    // Draw checkered flag
+    val flagLeft = width * 0.2f
+    val flagTop = height * 0.2f
+    val flagRight = width * 0.85f
+    val flagBottom = height * 0.5f
+    val flagWidth = flagRight - flagLeft
+    val flagHeight = flagBottom - flagTop
+    val rows = 4
+    val cols = 6
+    val cellW = flagWidth / cols
+    val cellH = flagHeight / rows
+    for (row in 0 until rows) {
+        for (col in 0 until cols) {
+            paint.style = android.graphics.Paint.Style.FILL
+            paint.color = if ((row + col) % 2 == 0) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+            val left = flagLeft + col * cellW
+            val top = flagTop + row * cellH
+            val right = left + cellW
+            val bottom = top + cellH
+            canvas.drawRect(left, top, right, bottom, paint)
+        }
+    }
+    // Draw flag border
+    paint.style = android.graphics.Paint.Style.STROKE
+    paint.color = android.graphics.Color.BLACK
+    paint.strokeWidth = 2f
+    canvas.drawRect(flagLeft, flagTop, flagRight, flagBottom, paint)
+
     return bitmap
 }
 }

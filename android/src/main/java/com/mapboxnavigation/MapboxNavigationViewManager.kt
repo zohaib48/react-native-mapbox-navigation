@@ -80,21 +80,23 @@ class MapboxNavigationViewManager(private var reactContext: ReactApplicationCont
   @ReactProp(name = "waypoints")
   override fun setWaypoints(view: MapboxNavigationView?, value: ReadableArray?) {
     if (value == null) {
+      view?.setWaypointLegs(listOf())
       view?.setWaypoints(listOf())
       return
     }
     val legs = mutableListOf<WaypointLegs>()
-    val waypoints: List<Point> = value.toArrayList().mapIndexedNotNull { index, item ->
+    val waypoints: List<CustomWaypoint> = value.toArrayList().mapIndexedNotNull { index, item ->
       val map = item as? Map<*, *>
       val latitude = map?.get("latitude") as? Double
       val longitude = map?.get("longitude") as? Double
       val name = map?.get("name") as? String
       val separatesLegs = map?.get("separatesLegs") as? Boolean
+      val isWaypoint = map?.get("waypoints") as? Boolean ?: false
       if (separatesLegs != false) {
         legs.add(WaypointLegs(index = index + 1, name = name ?: "waypoint-$index"))
       }
       if (latitude != null && longitude != null) {
-        Point.fromLngLat(longitude, latitude)
+        CustomWaypoint(Point.fromLngLat(longitude, latitude), isWaypoint)
       } else {
         null
       }

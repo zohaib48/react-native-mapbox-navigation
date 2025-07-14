@@ -9,6 +9,7 @@
     json = [self NSDictionary:json];
     waypoint.name = json[@"name"];
     waypoint.separatesLegs = json[@"separatesLegs"] != nil ? [json[@"separatesLegs"] boolValue] : YES;
+    waypoint.isWaypoint = json[@"waypoints"] ? [json[@"waypoints"] boolValue] : NO;
     waypoint.coordinate = (CLLocationCoordinate2D){
         [self CLLocationDegrees:json[@"latitude"]],
         [self CLLocationDegrees:json[@"longitude"]]
