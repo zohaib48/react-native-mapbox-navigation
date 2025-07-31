@@ -852,10 +852,20 @@ private fun formatDuration(seconds: Double): String {
 }
 
 private fun formatDistance(meters: Float): String {
-    return if (meters >= 1000) {
-        String.format("%.1f km", meters / 1000)
+    return if (distanceUnit == "imperial") {
+        // Imperial units: show miles
+        if (meters >= 1609.34) { // 1 mile = 1609.34 meters
+            String.format("%.1f mi", meters / 1609.34)
+        } else {
+            String.format("%.0f m", meters)
+        }
     } else {
-        String.format("%.0f m", meters)
+        // Metric units: show kilometers
+        if (meters >= 1000) { // 1 km = 1000 meters
+            String.format("%.1f km", meters / 1000)
+        } else {
+            String.format("%.0f m", meters)
+        }
     }
 }
 
