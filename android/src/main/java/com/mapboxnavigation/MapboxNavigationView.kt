@@ -495,9 +495,14 @@ override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherRe
 
     // draw the upcoming maneuver arrow on the map
     val style = binding.mapView.mapboxMap.style
-    if (style != null) {
-      val maneuverArrowResult = routeArrowApi.addUpcomingManeuverArrow(routeProgress)
-      routeArrowView.renderManeuverUpdate(style, maneuverArrowResult)
+     if (style != null) {
+        val maneuverArrowResult = routeArrowApi.addUpcomingManeuverArrow(routeProgress)
+        routeArrowView.renderManeuverUpdate(style, maneuverArrowResult)
+        
+        // ADD THIS: Update route line to show traveled vs remaining portions
+        routeLineApi.updateWithRouteProgress(routeProgress) { result ->
+            routeLineView.renderRouteLineUpdate(style, result)
+        }
     }
 
     // update top banner with maneuver instructions
