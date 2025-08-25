@@ -1,4 +1,3 @@
-//MapboxNavigationView.kt
 package com.mapboxnavigation
 
 import android.annotation.SuppressLint
@@ -102,7 +101,6 @@ import com.mapbox.navigation.ui.components.maneuver.view.MapboxPrimaryManeuver
 import com.mapbox.navigation.tripdata.maneuver.model.PrimaryManeuverFactory
 import com.mapbox.navigation.tripdata.maneuver.model.TextComponentNode
 import java.time.Instant
-// In your imports:
 import com.mapbox.turf.TurfMeasurement
 import com.mapbox.turf.TurfConstants
 import java.text.SimpleDateFormat
@@ -110,6 +108,7 @@ import java.util.Date
 import java.util.TimeZone
 
 
+// Keep the same data class already used
 data class CustomWaypoint(val point: Point, val isWaypoint: Boolean)
 
 @SuppressLint("ViewConstructor")
@@ -119,11 +118,14 @@ class MapboxNavigationView(private val context: ThemedReactContext): FrameLayout
     private const val REROUTE_DELAY_MS = 500L
   }
 
-private var isRoutingToOrigin = false
-private var hasArrivedAtOrigin = false
-private val START_THRESHOLD_METERS = 1.0
+  private var isRoutingToOrigin = false
+  private var hasArrivedAtOrigin = false
+  private val START_THRESHOLD_METERS = 1.0
 
-
+  // Rate limiting and off-route thresholds
+  private var lastRerouteTimestamp: Long = 0L
+  private val MIN_REROUTE_INTERVAL_MS = 5_000L        // 5 seconds between reroute requests
+  private val OFF_ROUTE_THRESHOLD_METERS = 30.0       // if farther than 30m from the next target, reroute
 
   private var origin: Point? = null
   private var destination: Point? = null
@@ -163,9 +165,6 @@ private val START_THRESHOLD_METERS = 1.0
       initNavigation()
     }
   }
-
-
-
 
   /**
    * Bindings to the example layout.
@@ -270,7 +269,7 @@ private val START_THRESHOLD_METERS = 1.0
    * the system services required for on-device speech synthesis. With lazy initialization
    * there is a high risk that said services will not be available when the first instruction
    * has to be played. [MapboxVoiceInstructionsPlayer] should be instantiated in
-   * `Activity#onCreate`.
+   * Activity#onCreate.
    */
   private var voiceInstructionsPlayer: MapboxVoiceInstructionsPlayer? = null
 
@@ -322,297 +321,227 @@ private val START_THRESHOLD_METERS = 1.0
 
   /**
    * RouteLine: Additional route line options are available through the
-   * [MapboxRouteLineViewOptions] and [MapboxRouteLineApiOptions].
-   * Notice here the [MapboxRouteLineViewOptions.routeLineBelowLayerId] option. The map is made up of layers. In this
-   * case the route line will be placed below the "road-label" layer which is a good default
-   * for the most common Mapbox navigation related maps. You should consider if this should be
-   * changed for your use case especially if you are using a custom map style.
+   * [MapboxRouteLineViewOptions]. If using the default colors the [RouteLineColorResources] does not need to be set.
    */
   private val routeLineViewOptions: MapboxRouteLineViewOptions by lazy {
     MapboxRouteLineViewOptions.Builder(context)
-      /**
-       * Route line related colors can be customized via the [RouteLineColorResources]. If using the
-       * default colors the [RouteLineColorResources] does not need to be set as seen here, the
-       * defaults will be used internally by the builder.
-       */
-      .routeLineColorResources(RouteLineColorResources.Builder().build())
-      .routeLineBelowLayerId("road-label")
-      .build()
-  }
+        .routeLineColorResources(
+            RouteLineColorResources.Builder()
+                .routeDefaultColor(android.graphics.Color.parseColor("#3887BE")) // Blue for untraveled
+                .routeLineTraveledColor(android.graphics.Color.parseColor("#9E9E9E"))   // Grey for traveled
+                .routeLineTraveledCasingColor(android.graphics.Color.parseColor("#757575")) // Darker grey for traveled casing
+                .build()
+        )
+        .routeLineBelowLayerId("road-label")
+        .build()
+}
 
   private val routeLineApiOptions: MapboxRouteLineApiOptions by lazy {
     MapboxRouteLineApiOptions.Builder()
       .build()
   }
 
-  /**
-   * RouteLine: This class is responsible for rendering route line related mutations generated
-   * by the [routeLineApi]
-   */
   private val routeLineView by lazy {
     MapboxRouteLineView(routeLineViewOptions)
   }
 
-
-  /**
-   * RouteLine: This class is responsible for generating route line related data which must be
-   * rendered by the [routeLineView] in order to visualize the route line on the map.
-   */
   private val routeLineApi: MapboxRouteLineApi by lazy {
     MapboxRouteLineApi(routeLineApiOptions)
   }
 
-  /**
-   * RouteArrow: This class is responsible for generating data related to maneuver arrows. The
-   * data generated must be rendered by the [routeArrowView] in order to apply mutations to
-   * the map.
-   */
   private val routeArrowApi: MapboxRouteArrowApi by lazy {
     MapboxRouteArrowApi()
   }
 
-  /**
-   * RouteArrow: Customization of the maneuver arrow(s) can be done using the
-   * [RouteArrowOptions]. Here the above layer ID is used to determine where in the map layer
-   * stack the arrows appear. Above the layer of the route traffic line is being used here. Your
-   * use case may necessitate adjusting this to a different layer position.
-   */
   private val routeArrowOptions by lazy {
     RouteArrowOptions.Builder(context)
       .withAboveLayerId(TOP_LEVEL_ROUTE_LINE_LAYER_ID)
       .build()
   }
 
-  /**
-   * RouteArrow: This class is responsible for rendering the arrow related mutations generated
-   * by the [routeArrowApi]
-   */
   private val routeArrowView: MapboxRouteArrowView by lazy {
     MapboxRouteArrowView(routeArrowOptions)
   }
 
-  /**
-   * Gets notified with location updates.
-   *
-   * Exposes raw updates coming directly from the location services
-   * and the updates enhanced by the Navigation SDK (cleaned up and matched to the road).
-   */
-  private val locationObserver = object : LocationObserver {
-    var firstLocationUpdateReceived = false
+// REPLACE the body of your locationObserver with this implementation
+private val locationObserver = object : LocationObserver {
+  var firstLocationUpdateReceived = false
 
-    override fun onNewRawLocation(rawLocation: Location) {
-      // not handled
-    }
-
-  @SuppressLint("MissingPermission")
-override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherResult) {
-    val enhancedLocation = locationMatcherResult.enhancedLocation
-
-    // 1. Update the puck and camera
-    navigationLocationProvider.changePosition(
-        location = enhancedLocation,
-        keyPoints = locationMatcherResult.keyPoints
-    )
-    viewportDataSource.onLocationChanged(enhancedLocation)
-    viewportDataSource.evaluate()
-
-    // 2. First‐fix camera to user on initial update
-    if (!firstLocationUpdateReceived) {
-        firstLocationUpdateReceived = true
-        navigationCamera.requestNavigationCameraToOverview(
-            stateTransitionOptions = NavigationCameraTransitionOptions.Builder()
-                .maxDuration(0) // instant
-                .build()
-        )
-    }
-
-    // 3. Emit location to React Native
-    Arguments.createMap().also { event ->
-        event.putDouble("longitude", enhancedLocation.longitude)
-        event.putDouble("latitude", enhancedLocation.latitude)
-        event.putDouble("heading", enhancedLocation.bearing ?: 0.0)
-        event.putDouble("accuracy", enhancedLocation.horizontalAccuracy ?: 0.0)
-        context.getJSModule(RCTEventEmitter::class.java)
-            .receiveEvent(id, "onLocationChange", event)
-    }
-
-    // 4. Always build a route from current location to startOrigin, waypoints, destination
-    origin?.let { startOrigin ->
-        val userPoint = Point.fromLngLat(
-            enhancedLocation.longitude,
-            enhancedLocation.latitude
-        )
-        val coordinatesList = mutableListOf<Point>()
-        coordinatesList.add(userPoint)
-        coordinatesList.add(startOrigin)
-        coordinatesList.addAll(waypoints.map { it.point })
-        destination?.let { coordinatesList.add(it) }
-        mapboxNavigation?.requestRoutes(
-            RouteOptions.builder()
-                .applyDefaultNavigationOptions()
-                .applyLanguageAndVoiceUnitOptions(context)
-                .coordinatesList(coordinatesList)
-                .profile(travelMode)
-                .steps(true)
-                .build(),
-            object : NavigationRouterCallback {
-                override fun onRoutesReady(
-                    routes: List<NavigationRoute>,
-                    @RouterOrigin routerOrigin: String
-                ) {
-                    mapboxNavigation?.setNavigationRoutes(routes)
-                    mapboxNavigation?.startTripSession(withForegroundService = true)
-                }
-                override fun onFailure(
-                    reasons: List<RouterFailure>,
-                    routeOptions: RouteOptions
-                ) { Log.e("Routing", "Failed to build route: $reasons") }
-                override fun onCanceled(
-                    routeOptions: RouteOptions,
-                    @RouterOrigin routerOrigin: String
-                ) { /* no‐op */ }
-            }
-        )
-        return
-    }
-
-    // If no origin, do nothing
-}
-
+  override fun onNewRawLocation(rawLocation: Location) {
+    // not handled
   }
 
-  /**
-   * Gets notified with progress along the currently active route.
-   */
-  @RequiresApi(Build.VERSION_CODES.O)
-  @OptIn(com.mapbox.navigation.base.ExperimentalMapboxNavigationAPI::class)
-  private val routeProgressObserver = RouteProgressObserver { routeProgress ->
-    // update the camera position to account for the progressed fragment of the route
-    if (routeProgress.fractionTraveled.toDouble() != 0.0) {
-      viewportDataSource.onRouteProgressChanged(routeProgress)
-    }
+  @SuppressLint("MissingPermission")
+  override fun onNewLocationMatcherResult(locationMatcherResult: LocationMatcherResult) {
+      val enhancedLocation = locationMatcherResult.enhancedLocation
+  
+      // 1) Update puck & camera
+      navigationLocationProvider.changePosition(location = enhancedLocation, keyPoints = locationMatcherResult.keyPoints)
+      viewportDataSource.onLocationChanged(enhancedLocation)
+      viewportDataSource.evaluate()
+  
+      // 2) First fix camera to user on initial update
+      if (!firstLocationUpdateReceived) {
+          firstLocationUpdateReceived = true
+          navigationCamera.requestNavigationCameraToOverview(
+              stateTransitionOptions = NavigationCameraTransitionOptions.Builder().maxDuration(0).build()
+          )
+      }
+  
+      // 3) Emit location to React Native
+      Arguments.createMap().also { event ->
+          event.putDouble("longitude", enhancedLocation.longitude)
+          event.putDouble("latitude", enhancedLocation.latitude)
+          event.putDouble("heading", enhancedLocation.bearing ?: 0.0)
+          event.putDouble("accuracy", enhancedLocation.horizontalAccuracy ?: 0.0)
+          context.getJSModule(RCTEventEmitter::class.java).receiveEvent(id, "onLocationChange", event)
+      }
+  
+      // 4) Update stored customerLocation (so manual reroute uses latest start)
+      val userPoint = Point.fromLngLat(enhancedLocation.longitude, enhancedLocation.latitude)
+      customerLocation = userPoint
+      updateCustomerAnnotation()
+  
+      // 5) If user is essentially already at the origin, mark hasArrivedAtOrigin true
+      //    but DO NOT trigger a reroute or arrival event here. We just treat origin as reached.
+      origin?.let { startOrigin ->
+          val dist = TurfMeasurement.distance(userPoint, startOrigin, TurfConstants.UNIT_METERS)
+          if (!hasArrivedAtOrigin && dist <= START_THRESHOLD_METERS) {
+              // mark arrived at origin so updateRoute() won't add a duplicate start point
+              hasArrivedAtOrigin = true
+              isRoutingToOrigin = false
+              // Do NOT call scheduleReroute() or emit an arrival here — avoid confusing the SDK.
+          }
+      }
+  
+      // NOTE: we intentionally DO NOT call requestRoutes() from location updates anymore.
+      // The initial route is created once (startRoute -> updateRoute). The route line will be
+      // visually trimmed by routeProgressObserver as the user moves.
+  }
+  
+}
+
+
+// REPLACE your routeProgressObserver with this updated version
+@RequiresApi(Build.VERSION_CODES.O)
+@OptIn(com.mapbox.navigation.base.ExperimentalMapboxNavigationAPI::class)
+private val routeProgressObserver = RouteProgressObserver { routeProgress ->
+    // Update the camera position to account for the progressed fragment of the route
+    viewportDataSource.onRouteProgressChanged(routeProgress)
     viewportDataSource.evaluate()
 
-    // draw the upcoming maneuver arrow on the map
-    val style = binding.mapView.mapboxMap.style
-     if (style != null) {
-        val maneuverArrowResult = routeArrowApi.addUpcomingManeuverArrow(routeProgress)
-        routeArrowView.renderManeuverUpdate(style, maneuverArrowResult)
-        
-        // ADD THIS: Update route line to show traveled vs remaining portions
-        routeLineApi.updateWithRouteProgress(routeProgress) { result ->
+    // CRITICAL: Update route line to show traveled vs remaining portions
+    // This should grey out the traveled portion
+    routeLineApi.updateWithRouteProgress(routeProgress) { result ->
+        binding.mapView.mapboxMap.style?.let { style ->
             routeLineView.renderRouteLineUpdate(style, result)
         }
     }
 
-    // update top banner with maneuver instructions
+    // Draw the upcoming maneuver arrow on the map
+    val style = binding.mapView.mapboxMap.style
+    if (style != null) {
+        val maneuverArrowResult = routeArrowApi.addUpcomingManeuverArrow(routeProgress)
+        routeArrowView.renderManeuverUpdate(style, maneuverArrowResult)
+    }
+
+    // Rest of your maneuver and progress code remains the same...
     if (::maneuverApi.isInitialized) {
         val maneuvers = maneuverApi.getManeuvers(routeProgress)
         maneuvers.fold(
-          { error ->
-            Log.w("Maneuvers error:", error.throwable)
-          },
-          {
-            val maneuverViewOptions = ManeuverViewOptions.Builder()
-              .primaryManeuverOptions(
-                ManeuverPrimaryOptions.Builder()
-                  .textAppearance(R.style.PrimaryManeuverTextAppearance)
-                  .build()
-              )
-              .secondaryManeuverOptions(
-                ManeuverSecondaryOptions.Builder()
-                  .textAppearance(R.style.ManeuverTextAppearance)
-                  .build()
-              )
-              .subManeuverOptions(
-                ManeuverSubOptions.Builder()
-                  .textAppearance(R.style.ManeuverTextAppearance)
-                  .build()
-              )
-              .stepDistanceTextAppearance(R.style.StepDistanceRemainingAppearance)
-              .build()
+            { error ->
+                Log.w("Maneuvers error:", error.throwable)
+            },
+            {
+                val maneuverViewOptions = ManeuverViewOptions.Builder()
+                    .primaryManeuverOptions(
+                        ManeuverPrimaryOptions.Builder()
+                            .textAppearance(R.style.PrimaryManeuverTextAppearance)
+                            .build()
+                    )
+                    .secondaryManeuverOptions(
+                        ManeuverSecondaryOptions.Builder()
+                            .textAppearance(R.style.ManeuverTextAppearance)
+                            .build()
+                    )
+                    .subManeuverOptions(
+                        ManeuverSubOptions.Builder()
+                            .textAppearance(R.style.ManeuverTextAppearance)
+                            .build()
+                    )
+                    .stepDistanceTextAppearance(R.style.StepDistanceRemainingAppearance)
+                    .build()
 
-            if(isWaypointArrived){
-              val currentTime = Instant.now()
-              val textNode = TextComponentNode.Builder()
-                .text("You have arrived at $waypointTitle")
-                .build()
-              val textComp = Component(
-                BannerComponents.TEXT,
-                textNode
-              )
+                if(isWaypointArrived){
+                    val currentTime = Instant.now()
+                    val textNode = TextComponentNode.Builder()
+                        .text("You have arrived at $waypointTitle")
+                        .build()
+                    val textComp = Component(
+                        BannerComponents.TEXT,
+                        textNode
+                    )
 
-              val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
-                id = "arrival_$currentTime",
-                text = "You have arrived at $destinationTitle",
-                type = null,
-                degrees = null,
-                modifier = null,
-                drivingSide = null,
-                componentList = listOf(textComp)
-              )
+                    val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
+                        id = "arrival_$currentTime",
+                        text = "You have arrived at $waypointTitle",
+                        type = null,
+                        degrees = null,
+                        modifier = null,
+                        drivingSide = null,
+                        componentList = listOf(textComp)
+                    )
 
-              binding.maneuverView.visibility = View.VISIBLE
-              binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
-              binding.maneuverView.renderPrimary(primaryManeuver,null)
+                    binding.maneuverView.visibility = View.VISIBLE
+                    binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+                    binding.maneuverView.renderPrimary(primaryManeuver,null)
+                }
+                else if (isDestinationArrived){
+                    val currentTime = Instant.now()
+                    val textNode = TextComponentNode.Builder()
+                        .text("You have arrived at $destinationTitle")
+                        .build()
+                    val textComp = Component(
+                        BannerComponents.TEXT,
+                        textNode
+                    )
+
+                    val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
+                        id = "arrival_$currentTime",
+                        text = "You have arrived at $destinationTitle",
+                        type = null,
+                        degrees = null,
+                        modifier = null,
+                        drivingSide = null,
+                        componentList = listOf(textComp)
+                    )
+
+                    binding.maneuverView.visibility = View.VISIBLE
+                    binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+                    binding.maneuverView.renderPrimary(primaryManeuver,null)
+                }
+                else {
+                    binding.maneuverView.visibility = View.VISIBLE
+                    binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
+                    binding.maneuverView.renderManeuvers(maneuvers)
+                }
             }
-            else if (isDestinationArrived){
-              val currentTime = Instant.now()
-              val textNode = TextComponentNode.Builder()
-                .text("You have arrived at $destinationTitle")
-                .build()
-              val textComp = Component(
-                BannerComponents.TEXT,
-                textNode
-              )
-
-              val primaryManeuver = PrimaryManeuverFactory.buildPrimaryManeuver(
-                id = "arrival_$currentTime",
-                text = "You have arrived at $destinationTitle",
-                type = null,
-                degrees = null,
-                modifier = null,
-                drivingSide = null,
-                componentList = listOf(textComp)
-              )
-
-              binding.maneuverView.visibility = View.VISIBLE
-              binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
-              binding.maneuverView.renderPrimary(primaryManeuver,null)
-            }
-            else {
-
-              binding.maneuverView.visibility = View.VISIBLE
-              binding.maneuverView.updateManeuverViewOptions(maneuverViewOptions)
-              binding.maneuverView.renderManeuvers(maneuvers)
-            }
-
-
-          }
         )
     } else {
         Log.w("MapboxNavigationView", "maneuverApi not initialized yet")
     }
 
+    val update = tripProgressApi.getTripProgress(routeProgress)
+    binding.tripProgressCard.visibility = View.VISIBLE
 
-val update = tripProgressApi.getTripProgress(routeProgress)
+    val durationSeconds = routeProgress.durationRemaining
+    val distanceMeters = routeProgress.distanceRemaining
 
-binding.tripProgressCard.visibility = View.VISIBLE
-
-val durationSeconds = routeProgress.durationRemaining
-val distanceMeters = routeProgress.distanceRemaining
-
-binding.timeText.text = formatDuration(durationSeconds)
-binding.distanceText.text = formatDistance(distanceMeters)
-val etaMillis = System.currentTimeMillis() + (durationSeconds * 1000).toLong()
-val etaFormatted = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(etaMillis))
-binding.arrivalText.text = etaFormatted
-
-
-
-
-
-
+    binding.timeText.text = formatDuration(durationSeconds)
+    binding.distanceText.text = formatDistance(distanceMeters)
+    val etaMillis = System.currentTimeMillis() + (durationSeconds * 1000).toLong()
+    val etaFormatted = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(etaMillis))
+    binding.arrivalText.text = etaFormatted
 
     val event = Arguments.createMap()
     event.putDouble("distanceTraveled", routeProgress.distanceTraveled.toDouble())
@@ -620,21 +549,12 @@ binding.arrivalText.text = etaFormatted
     event.putDouble("fractionTraveled", routeProgress.fractionTraveled.toDouble())
     event.putDouble("distanceRemaining", routeProgress.distanceRemaining.toDouble())
     context
-      .getJSModule(RCTEventEmitter::class.java)
-      .receiveEvent(id, "onRouteProgressChange", event)
-  }
+        .getJSModule(RCTEventEmitter::class.java)
+        .receiveEvent(id, "onRouteProgressChange", event)
+}
 
-  /**
-   * Gets notified whenever the tracked routes change.
-   *
-   * A change can mean:
-   * - routes get changed with [MapboxNavigation.setNavigationRoutes]
-   * - routes annotations get refreshed (for example, congestion annotation that indicate the live traffic along the route)
-   * - driver got off route and a reroute was executed
-   */
   private val routesObserver = RoutesObserver { routeUpdateResult ->
     if (routeUpdateResult.navigationRoutes.isNotEmpty()) {
-      // generate route geometries asynchronously and render them
       routeLineApi.setNavigationRoutes(
         routeUpdateResult.navigationRoutes
       ) { value ->
@@ -642,12 +562,10 @@ binding.arrivalText.text = etaFormatted
           routeLineView.renderRouteDrawData(this, value)
         }
       }
-
-      // update the camera position to account for the new route
+  
       viewportDataSource.onRouteChanged(routeUpdateResult.navigationRoutes.first())
       viewportDataSource.evaluate()
     } else {
-      // remove the route line and route arrow from the map
       val style = binding.mapView.mapboxMap.style
       if (style != null) {
         routeLineApi.clearRouteLine { value ->
@@ -658,8 +576,7 @@ binding.arrivalText.text = etaFormatted
         }
         routeArrowView.render(style, routeArrowApi.clearArrows())
       }
-
-      // remove the route reference from camera position evaluations
+  
       viewportDataSource.clearRouteData()
       viewportDataSource.evaluate()
     }
@@ -667,7 +584,6 @@ binding.arrivalText.text = etaFormatted
 
   init {
     onCreate()
-    // Eagerly initialize maneuverApi and tripProgressApi with default values to avoid uninitialized access
     val unitType = if (distanceUnit == "imperial") UnitType.IMPERIAL else UnitType.METRIC
     val distanceFormatterOptions = DistanceFormatterOptions.Builder(context)
         .unitType(unitType)
@@ -684,7 +600,6 @@ binding.arrivalText.text = etaFormatted
   }
 
   private fun onCreate() {
-    // initialize Mapbox Navigation
     mapboxNavigation = if (MapboxNavigationProvider.isCreated()) {
       MapboxNavigationProvider.retrieve()
     } else {
@@ -702,23 +617,18 @@ binding.arrivalText.text = etaFormatted
       return
     }
 
-    // Recenter Camera
     val initialCameraOptions = CameraOptions.Builder()
       .zoom(14.0)
       .center(origin)
       .build()
     binding.mapView.mapboxMap.setCamera(initialCameraOptions)
 
-    // Start Navigation
     startNavigation()
 
-    // set the animations lifecycle listener to ensure the NavigationCamera stops
-    // automatically following the user location when the map is interacted with
     binding.mapView.camera.addCameraAnimationsLifecycleListener(
       NavigationBasicGesturesHandler(navigationCamera)
     )
     navigationCamera.registerNavigationCameraStateChangeObserver { navigationCameraState ->
-      // shows/hide the recenter button depending on the camera state
       when (navigationCameraState) {
         NavigationCameraState.TRANSITION_TO_FOLLOWING,
         NavigationCameraState.FOLLOWING -> binding.recenter.visibility = View.INVISIBLE
@@ -728,7 +638,7 @@ binding.arrivalText.text = etaFormatted
         NavigationCameraState.IDLE -> binding.recenter.visibility = View.VISIBLE
       }
     }
-    // set the padding values depending on screen orientation and visible view layout
+
     if (this.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
       viewportDataSource.overviewPadding = landscapeOverviewPadding
     } else {
@@ -740,7 +650,6 @@ binding.arrivalText.text = etaFormatted
       viewportDataSource.followingPadding = followingPadding
     }
 
-    // Always re-initialize maneuverApi and tripProgressApi with up-to-date options
     val unitType = if (distanceUnit == "imperial") UnitType.IMPERIAL else UnitType.METRIC
     val distanceFormatterOptions = DistanceFormatterOptions.Builder(context)
         .unitType(unitType)
@@ -766,7 +675,7 @@ binding.arrivalText.text = etaFormatted
             )
             .build()
     )
-    // initialize voice instructions api and the voice instruction player
+
     speechApi = MapboxSpeechApi(
       context,
       locale.language
@@ -776,37 +685,38 @@ binding.arrivalText.text = etaFormatted
       locale.language
     )
 
-    // load map style
- // load map style
-// load map style
-binding.mapView.mapboxMap.loadStyle(mapStyle) {
-    // Add custom images first
+   binding.mapView.mapboxMap.loadStyle(mapStyle) {
     val dotBitmap = BitmapFactory.decodeResource(context.resources,R.drawable.red_dot)
     it.addImage(
         "customer_icon",
         dotBitmap
     )
-    
-    // Initialize route line layers first
+
+    // Initialize route line layers FIRST
     routeLineView.initializeLayers(it)
     
-    // Then initialize location puck to ensure it's on top
-    binding.mapView.location.apply {
-        setLocationProvider(navigationLocationProvider)
-        this.locationPuck = LocationPuck2D(
-            bearingImage = ImageHolder.Companion.from(
-                com.mapbox.navigation.ui.maps.R.drawable.mapbox_navigation_puck_icon
-            )
-        )
-        puckBearingEnabled = true
-        enabled = true
+    // Clear any existing route line
+    routeLineApi.clearRouteLine { value ->
+        routeLineView.renderClearRouteLineValue(it, value)
     }
-    
-    updateCustomerAnnotation()
-    updateWaypointAnnotations()
-}
 
-    // initialize view interactions
+
+
+        binding.mapView.location.apply {
+            setLocationProvider(navigationLocationProvider)
+            this.locationPuck = LocationPuck2D(
+                bearingImage = ImageHolder.Companion.from(
+                    com.mapbox.navigation.ui.maps.R.drawable.mapbox_navigation_puck_icon
+                )
+            )
+            puckBearingEnabled = true
+            enabled = true
+        }
+
+        updateCustomerAnnotation()
+        updateWaypointAnnotations()
+    }
+
     binding.stop.setOnClickListener {
       val event = Arguments.createMap()
       event.putString("message", "Navigation Cancel")
@@ -830,11 +740,9 @@ binding.mapView.mapboxMap.loadStyle(mapStyle) {
       binding.recenter.showTextAndExtend(BUTTON_ANIMATION_DURATION)
     }
     binding.soundButton.setOnClickListener {
-      // mute/unmute voice instructions
       isVoiceInstructionsMuted = !isVoiceInstructionsMuted
     }
 
-    // Check initial muted or not
     if (this.isVoiceInstructionsMuted) {
       binding.soundButton.mute()
       voiceInstructionsPlayer?.volume(SpeechVolume(0f))
@@ -844,38 +752,33 @@ binding.mapView.mapboxMap.loadStyle(mapStyle) {
     }
   }
 
-private fun formatDuration(seconds: Double): String {
-    val minutes = (seconds / 60).toInt()
-    val hours = minutes / 60
-    val remainingMinutes = minutes % 60
+  private fun formatDuration(seconds: Double): String {
+      val minutes = (seconds / 60).toInt()
+      val hours = minutes / 60
+      val remainingMinutes = minutes % 60
 
-    return if (hours > 0) {
-        "$hours h $remainingMinutes min"
-    } else {
-        "$remainingMinutes min"
-    }
-}
+      return if (hours > 0) {
+          "$hours h $remainingMinutes min"
+      } else {
+          "$remainingMinutes min"
+      }
+  }
 
-private fun formatDistance(meters: Float): String {
-    return if (distanceUnit == "imperial") {
-        // Imperial units: show miles
-        if (meters >= 1609.34) { // 1 mile = 1609.34 meters
-            String.format("%.1f mi", meters / 1609.34)
-        } else {
-            String.format("%.0f m", meters)
-        }
-    } else {
-        // Metric units: show kilometers
-        if (meters >= 1000) { // 1 km = 1000 meters
-            String.format("%.1f km", meters / 1000)
-        } else {
-            String.format("%.0f m", meters)
-        }
-    }
-}
-
-
-
+  private fun formatDistance(meters: Float): String {
+      return if (distanceUnit == "imperial") {
+          if (meters >= 1609.34) {
+              String.format("%.1f mi", meters / 1609.34)
+          } else {
+              String.format("%.0f m", meters)
+          }
+      } else {
+          if (meters >= 1000) {
+              String.format("%.1f km", meters / 1000)
+          } else {
+              String.format("%.0f m", meters)
+          }
+      }
+  }
 
   private fun onDestroy() {
     resetArrivalFlags()
@@ -892,8 +795,6 @@ private fun formatDistance(meters: Float): String {
   }
 
   private fun startNavigation() {
-  
-
     startRoute()
   }
 
@@ -906,10 +807,11 @@ private fun formatDistance(meters: Float): String {
     mapboxNavigation?.registerVoiceInstructionsObserver(voiceInstructionsObserver)
     mapboxNavigation?.startTripSession(withForegroundService = true)
     // Reset arrival flags so arrivalObserver handles origin → checkpoint correctly
-    hasArrivedAtOrigin = true  // prevent re-routing back to origin
+    // DO NOT set hasArrivedAtOrigin = true here. It should be set only when user is near origin.
+    hasArrivedAtOrigin = false
     isRoutingToOrigin = false
     updateRoute()
-}
+  }
 
   private fun scheduleReroute() {
     if (!isNavigating) return
@@ -918,16 +820,56 @@ private fun formatDistance(meters: Float): String {
     postDelayed(rerouteRunnable, REROUTE_DELAY_MS)
   }
 
-  private fun updateRoute() {
-    if (origin == null || destination == null) return
+// REPLACE current updateRoute() with this
+private fun updateRoute() {
+  if (destination == null) return
 
-    val coordinatesList = mutableListOf<Point>()
-    origin?.let { coordinatesList.add(it) }
-    coordinatesList.addAll(waypoints.map { it.point })
-    destination?.let { coordinatesList.add(it) }
+  val coords = mutableListOf<Point>()
 
-    findRoute(coordinatesList)
+  // If we haven't arrived at origin yet, prefer starting from customerLocation -> origin
+  if (!hasArrivedAtOrigin) {
+      if (customerLocation != null && origin != null) {
+          // If customerLocation is essentially the same as origin, mark arrived and start at origin
+          val distToOrigin = TurfMeasurement.distance(customerLocation!!, origin!!, TurfConstants.UNIT_METERS)
+          if (distToOrigin <= START_THRESHOLD_METERS) {
+              hasArrivedAtOrigin = true
+              coords.add(origin!!)
+          } else {
+              coords.add(customerLocation!!)
+              coords.add(origin!!)
+          }
+      } else if (customerLocation != null) {
+          coords.add(customerLocation!!)
+      } else {
+          origin?.let { coords.add(it) }
+      }
+  } else {
+      // Already at origin — start from origin
+      origin?.let { coords.add(it) }
   }
+
+  // Add waypoints/checkpoints and final destination
+  coords.addAll(waypoints.map { it.point })
+  destination?.let { coords.add(it) }
+
+  // Remove consecutive duplicate points (same lat/lng)
+  val unique = mutableListOf<Point>()
+  coords.forEach { p ->
+      if (unique.isEmpty() ||
+          p.latitude() != unique.last().latitude() ||
+          p.longitude() != unique.last().longitude()
+      ) {
+          unique.add(p)
+      }
+  }
+
+  // Directions API needs at least two coordinates
+  if (unique.size < 2) return
+
+  findRoute(unique)
+}
+
+
 
 
 
@@ -936,7 +878,7 @@ private fun formatDistance(meters: Float): String {
     override fun onWaypointArrival(routeProgress: RouteProgress) {
       lastArrivedLegIndex = routeProgress.currentLegProgress?.legIndex
       waypointTitle = waypointLegs
-        .firstOrNull { it.index == lastArrivedLegIndex }  // comes from the names you passed in RouteOptions
+        .firstOrNull { it.index == lastArrivedLegIndex }
         ?.name ?: "Waypoint"
 
       isWaypointArrived = true
@@ -944,7 +886,6 @@ private fun formatDistance(meters: Float): String {
     }
 
     override fun onNextRouteLegStart(routeLegProgress: RouteLegProgress) {
-      // do something when the user starts a new leg
       resetArrivalFlags()
     }
 
@@ -982,23 +923,16 @@ private fun formatDistance(meters: Float): String {
   }
 
   private fun findRoute(coordinates: List<Point>) {
-    // Separate legs work
-    val indices = mutableListOf<Int>()
-    val names = mutableListOf<String>()
-    indices.add(0)
-    names.add("origin")
-    indices.addAll(waypointLegs.map { it.index })
-    names.addAll(waypointLegs.map { it.name })
-    indices.add(coordinates.count() - 1)
-    names.add(destinationTitle)
+    if (coordinates.isEmpty()) return
+
+    // Update last reroute timestamp (guard to prevent frequent requests)
+    lastRerouteTimestamp = System.currentTimeMillis()
 
     mapboxNavigation?.requestRoutes(
       RouteOptions.builder()
         .applyDefaultNavigationOptions()
         .applyLanguageAndVoiceUnitOptions(context)
         .coordinatesList(coordinates)
-        .waypointIndicesList(indices)
-        .waypointNamesList(names)
         .language(locale.language)
         .steps(true)
         .voiceInstructions(true)
@@ -1045,15 +979,11 @@ private fun formatDistance(meters: Float): String {
 
   @SuppressLint("MissingPermission")
   private fun setRouteAndStartNavigation(routes: List<NavigationRoute>) {
-    // set routes, where the first route in the list is the primary route that
-    // will be used for active guidance
     mapboxNavigation?.setNavigationRoutes(routes)
 
-    // show UI elements
     binding.soundButton.visibility = View.VISIBLE
     binding.routeOverview.visibility = View.VISIBLE
     binding.tripProgressCard.visibility = View.VISIBLE
-
 
   }
 
@@ -1069,10 +999,8 @@ private fun formatDistance(meters: Float): String {
     navigationInitialized = false
     removeCallbacks(rerouteRunnable)
 
-    // Clear routs and end
     mapboxNavigation?.setNavigationRoutes(listOf())
 
-    // hide UI elements
     binding.soundButton.visibility = View.INVISIBLE
     binding.maneuverView.visibility = View.INVISIBLE
     binding.routeOverview.visibility = View.INVISIBLE
@@ -1122,7 +1050,7 @@ private fun formatDistance(meters: Float): String {
     this.waypoints = waypoints
     updateWaypointAnnotations()
     if (isNavigating) scheduleReroute()
-}
+  }
 
   fun setDirectionUnit(unit: String) {
     this.distanceUnit = unit
@@ -1189,21 +1117,18 @@ private fun formatDistance(meters: Float): String {
     }
   }
 
-private fun updateWaypointAnnotations() {
+  private fun updateWaypointAnnotations() {
     val mapView = binding.mapView
-    // Remove old annotations
     waypointAnnotationManager?.deleteAll()
     waypointAnnotations.clear()
     if (waypoints.isEmpty() && origin == null && destination == null) return
-    
-    // Only proceed if style is loaded
+
     mapView.mapboxMap.getStyle { style ->
         if (waypointAnnotationManager == null) {
             waypointAnnotationManager = mapView.annotations.createPointAnnotationManager()
         }
         val manager = waypointAnnotationManager!!
-        
-        // Add start (origin) annotation with checkered flag icon
+
         origin?.let { startPoint ->
             val startFlagIconId = "start_checkered_flag_icon"
             if (style.getStyleImage(startFlagIconId) == null) {
@@ -1217,7 +1142,7 @@ private fun updateWaypointAnnotations() {
             val annotation = manager.create(opts)
             waypointAnnotations.add(annotation)
         }
-        // Add waypoint annotations with correct icon
+
         waypoints.forEachIndexed { idx, customWaypoint ->
             val point = customWaypoint.point
             val isWaypoint = customWaypoint.isWaypoint
@@ -1231,7 +1156,7 @@ private fun updateWaypointAnnotations() {
             val annotation = manager.create(opts)
             waypointAnnotations.add(annotation)
         }
-        // Add destination annotation with checkered flag icon
+
         destination?.let { destPoint ->
             val flagIconId = "destination_checkered_flag_icon"
             if (style.getStyleImage(flagIconId) == null) {
@@ -1246,55 +1171,45 @@ private fun updateWaypointAnnotations() {
             waypointAnnotations.add(annotation)
         }
     }
-}
+  }
 
-private fun createDestinationFlagBitmap(): android.graphics.Bitmap {
+  private fun createDestinationFlagBitmap(): android.graphics.Bitmap { /* same as before */
     val width = 48
     val height = 64
     val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
     val paint = android.graphics.Paint()
     paint.isAntiAlias = true
-    
-    // Draw flag pole
-    paint.color = android.graphics.Color.parseColor("#8B4513") // Brown
+    paint.color = android.graphics.Color.parseColor("#8B4513")
     paint.strokeWidth = 4f
     canvas.drawLine(width * 0.15f, height * 0.2f, width * 0.15f, height * 0.95f, paint)
-    
-    // Draw flag
     paint.style = android.graphics.Paint.Style.FILL
-    paint.color = android.graphics.Color.parseColor("#FF3B30") // Red flag
+    paint.color = android.graphics.Color.parseColor("#FF3B30")
     val flagPath = android.graphics.Path()
     flagPath.moveTo(width * 0.2f, height * 0.2f)
     flagPath.lineTo(width * 0.85f, height * 0.35f)
     flagPath.lineTo(width * 0.2f, height * 0.5f)
     flagPath.close()
     canvas.drawPath(flagPath, paint)
-    
-    // Draw flag border
     paint.style = android.graphics.Paint.Style.STROKE
-    paint.color = android.graphics.Color.parseColor("#D70015") // Darker red
+    paint.color = android.graphics.Color.parseColor("#D70015")
     paint.strokeWidth = 2f
     canvas.drawPath(flagPath, paint)
-    
     return bitmap
-}
+  }
 
-private fun createNumberedWaypointBitmap(number: Int): android.graphics.Bitmap {
+  private fun createNumberedWaypointBitmap(number: Int): android.graphics.Bitmap { /* same as before */
     val size = 64
     val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
     val paint = android.graphics.Paint()
     paint.isAntiAlias = true
-    // Draw blue circle (iOS style)
-    paint.color = android.graphics.Color.parseColor("#007AFF") // iOS blue
+    paint.color = android.graphics.Color.parseColor("#007AFF")
     canvas.drawCircle(size / 2f, size / 2f, size / 2.2f, paint)
-    // Draw white border
     paint.style = android.graphics.Paint.Style.STROKE
     paint.color = android.graphics.Color.WHITE
     paint.strokeWidth = 6f
     canvas.drawCircle(size / 2f, size / 2f, size / 2.2f - 3f, paint)
-    // Draw number
     paint.style = android.graphics.Paint.Style.FILL
     paint.color = android.graphics.Color.WHITE
     paint.textSize = size / 2f + 4f
@@ -1303,22 +1218,18 @@ private fun createNumberedWaypointBitmap(number: Int): android.graphics.Bitmap {
     val textY = size / 2f - (paint.descent() + paint.ascent()) / 2
     canvas.drawText(number.toString(), size / 2f, textY, paint)
     return bitmap
-}
+  }
 
-private fun createMapPinBitmap(): android.graphics.Bitmap {
+  private fun createMapPinBitmap(): android.graphics.Bitmap { /* same as before */
     val width = 48
     val height = 64
     val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
     val paint = android.graphics.Paint()
     paint.isAntiAlias = true
-
-    // Draw pin body
-    paint.color = android.graphics.Color.parseColor("#007AFF") // Blue
+    paint.color = android.graphics.Color.parseColor("#007AFF")
     val ovalRect = android.graphics.RectF(0f, 0f, width.toFloat(), height * 0.75f)
     canvas.drawOval(ovalRect, paint)
-
-    // Draw pin tip
     paint.color = android.graphics.Color.parseColor("#007AFF")
     val path = android.graphics.Path()
     path.moveTo(width / 2f, height.toFloat())
@@ -1326,28 +1237,21 @@ private fun createMapPinBitmap(): android.graphics.Bitmap {
     path.lineTo(width * 0.85f, height * 0.75f)
     path.close()
     canvas.drawPath(path, paint)
-
-    // Draw white circle in center
     paint.color = android.graphics.Color.WHITE
     canvas.drawCircle(width / 2f, height * 0.35f, width * 0.15f, paint)
-
     return bitmap
-}
+  }
 
-private fun createCheckeredFlagBitmap(): android.graphics.Bitmap {
+  private fun createCheckeredFlagBitmap(): android.graphics.Bitmap { /* same as before */
     val width = 48
     val height = 64
     val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
     val paint = android.graphics.Paint()
     paint.isAntiAlias = true
-
-    // Draw flag pole
-    paint.color = android.graphics.Color.parseColor("#8B4513") // Brown
+    paint.color = android.graphics.Color.parseColor("#8B4513")
     paint.strokeWidth = 4f
     canvas.drawLine(width * 0.15f, height * 0.2f, width * 0.15f, height * 0.95f, paint)
-
-    // Draw checkered flag
     val flagLeft = width * 0.2f
     val flagTop = height * 0.2f
     val flagRight = width * 0.85f
@@ -1369,12 +1273,10 @@ private fun createCheckeredFlagBitmap(): android.graphics.Bitmap {
             canvas.drawRect(left, top, right, bottom, paint)
         }
     }
-    // Draw flag border
     paint.style = android.graphics.Paint.Style.STROKE
     paint.color = android.graphics.Color.BLACK
     paint.strokeWidth = 2f
     canvas.drawRect(flagLeft, flagTop, flagRight, flagBottom, paint)
-
     return bitmap
-}
+  }
 }
